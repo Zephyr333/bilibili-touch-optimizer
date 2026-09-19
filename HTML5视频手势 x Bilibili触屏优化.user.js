@@ -2,14 +2,11 @@
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
 // @version      65.16
-// @description  保留HTML5视频手势核心逻辑，并融合B站收藏/历史触屏Hover优化与长按防右键菜单。
+// @description  保留HTML5视频手势核心逻辑，并融合B站播放器长按防右键菜单。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
 // @grant        GM_addStyle
-// @grant        GM_setClipboard
-// @grant        GM_registerMenuCommand
-// @grant        GM_unregisterMenuCommand
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @run-at       document-start
@@ -96,63 +93,6 @@
   };
   const isBilibiliHost = () => /(^|\.)bilibili\.com$/i.test(location.hostname);
 
-  const initBiliNavHoverShim = () => {
-    if (!isBilibiliHost()) return;
-
-    const bind = (entryRoot) => {
-      if (!entryRoot || entryRoot.dataset.gtBiliHoverBound === "1") return;
-      entryRoot.dataset.gtBiliHoverBound = "1";
-
-      const onClick = (event) => {
-        const target = event.target;
-        const anchor = target && target.closest ? target.closest("a") : null;
-        if (!anchor) return;
-
-        // 仅处理右上导航一级入口：ul.right-entry > li > a。
-        // 这样弹层内的“查看全部”等二级按钮不会被误拦截。
-        const isTopNavAnchor =
-          anchor.parentElement &&
-          anchor.parentElement.tagName === "LI" &&
-          anchor.parentElement.parentElement === entryRoot;
-        if (!isTopNavAnchor) {
-          return;
-        }
-
-        const href = (anchor.getAttribute("href") || "").toLowerCase();
-        const label =
-          `${anchor.textContent || ""} ${anchor.getAttribute("title") || ""} ${anchor.getAttribute("aria-label") || ""}`.toLowerCase();
-
-        const isHistory =
-          href.includes("/history") ||
-          label.includes("历史") ||
-          label.includes("history");
-        const isFavorite =
-          href.includes("/favlist") ||
-          href.includes("/favorite") ||
-          label.includes("收藏") ||
-          label.includes("favorite") ||
-          label.includes("favourite");
-
-        // 仅收藏/历史阻止默认跳转，个人中心等其它入口保持直接进入。
-        if (isHistory || isFavorite) {
-          event.preventDefault();
-        }
-      };
-
-      entryRoot.addEventListener("click", onClick);
-    };
-
-    const tryBind = () => {
-      const entry =
-        document.querySelector("#biliMainHeader ul.right-entry") ||
-        document.querySelector(".right-entry");
-      if (entry) bind(entry);
-    };
-
-    tryBind();
-    setInterval(tryBind, 1200);
-  };
-  initBiliNavHoverShim();
 
   const hijackFullscreenAPI = () => {
     const fsMethods = [
@@ -281,72 +221,6 @@
     }
   };
 
-  GM_registerMenuCommand("🔗 拷贝视频源(直链/页面)", () => {
-    if (sniffedUrl) {
-      GM_setClipboard(sniffedUrl);
-      showMsg("已复制嗅探流媒体直链");
-      return;
-    }
-    let v =
-      targetV ||
-      (document.querySelectorAll("video").length > 0
-        ? Array.from(document.querySelectorAll("video")).sort(
-            (a, b) =>
-              b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight,
-          )[0]
-        : null);
-    if (!v) {
-      showMsg("未找到视频元素");
-      return;
-    }
-    let src = v.src;
-    if (!src || src.startsWith("blob:")) {
-      const s = v.querySelector("source");
-      if (s && s.src) src = s.src;
-    }
-    if (src && !src.startsWith("blob:")) {
-      GM_setClipboard(src);
-      showMsg("已复制视频直链");
-    } else {
-      GM_setClipboard(window.location.href);
-      showMsg("已复制网页源地址");
-    }
-  });
-
-  let sniffedUrl = "";
-  const mediaReg = /\.(m3u8|mpd|mp4|webm|flv)(\?|$)/i;
-  const sniff = (url) => {
-    try {
-      if (
-        url &&
-        typeof url === "string" &&
-        mediaReg.test(url) &&
-        url.startsWith("http")
-      )
-        sniffedUrl = url;
-    } catch (e) {}
-  };
-
-  const oFetch = window.fetch;
-  window.fetch = function (...args) {
-    try {
-      let u =
-        typeof args[0] === "string"
-          ? args[0]
-          : args[0] && args[0].url
-            ? args[0].url
-            : "";
-      sniff(u);
-    } catch (e) {}
-    return oFetch.apply(window, args);
-  };
-  const oOpen = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-    try {
-      sniff(url);
-    } catch (e) {}
-    return oOpen.call(this, method, url, ...rest);
-  };
 
   const toggleOrientation = () => {
     if (!screen.orientation) return;
