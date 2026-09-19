@@ -222,22 +222,6 @@
   };
 
 
-  const toggleOrientation = () => {
-    if (!screen.orientation) return;
-    const dir = screen.orientation.type.startsWith("landscape")
-      ? "portrait"
-      : "landscape";
-    if (screen.orientation.lock) {
-      screen.orientation.lock(dir).catch(() => {
-        try {
-          window.top.postMessage(
-            { type: "gt_lock_orientation", dir: dir },
-            "*",
-          );
-        } catch (e) {}
-      });
-    }
-  };
 
   const TOUCH_LOCK_SELECTORS =
     '.video-js, .vjs-custom-skin, .player-container, .art-video-player, .xgplayer, .tcplayer, .prism-player, .mui-player, [data-testid="videoComponent"], .plyr, #html5video, #movie_player, .html5-video-player, .bpx-player-container, .dplayer, .artplayer-app, .MacPlayer, .ckplayer, #playleft, video, .gt-lock-touch';
@@ -577,8 +561,8 @@
       rBtn.className = "gt-btn-base gt-rotate-btn";
       rBtn.innerHTML = `<svg viewBox="0 0 24 24" width="100%" height="100%"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><polyline points="3 3 3 8 8 8"></polyline></svg>`;
       bindTap(rBtn, () => {
-        toggleOrientation();
-        wakeUpUI(root, video);
+        showMsg("刷新");
+        location.reload();
       });
       uiLayer.appendChild(rBtn);
       const smBtn = document.createElement("div");
