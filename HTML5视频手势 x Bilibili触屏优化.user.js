@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
-// @version      65.19
-// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
+// @version      65.20
+// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
@@ -26,6 +26,8 @@
     maxScale: 8.0,
     senseRate: 0.015,
     defaultPlaybackRate: 1.5,
+    deadzoneTop: 36,
+    deadzoneBottom: 44,
   };
 
   let seekSec = GM_getValue("gt_seek_sec", 10);
@@ -229,6 +231,7 @@
 
   GM_addStyle(`
         ${TOUCH_LOCK_SELECTORS} { touch-action: none !important; overscroll-behavior: none !important; }
+        .bpx-player-control-bottom, .bpx-player-control-bottom *, .bpx-player-progress-area, .bpx-player-progress-area * { touch-action: auto !important; }
         
         .dplayer-pause-ad, .dplayer-notice, .dplayer-ad, .artplayer-plugin-ads, .art-ad, .art-notice, .MacPlayer .play-ad, #playleft .pause-ad, .player-ad, .ad-box, .pause-ad, .ad-mask, .pause-html, #pause-html, [class*="pause-html"], [id*="pause-html"] { display: none !important; pointer-events: none !important; opacity: 0 !important; z-index: -2147483648 !important; width: 0 !important; height: 0 !important; }
         .gt-toast { position: fixed; top: 10%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.15); color: #fff; padding: 4px 10px; border-radius: 4px; font: 700 14px system-ui; z-index: 2147483647; pointer-events: none; opacity: 0; transition: opacity 0.2s; text-shadow: 0 0 2px #000; border: 1px solid rgba(255,255,255,0.05); }
@@ -347,6 +350,15 @@
         touch.clientX > rect.right + 10 ||
         touch.clientY < rect.top - 10 ||
         touch.clientY > rect.bottom + 10
+      )
+        return null;
+
+      // 上下边缘窄条防误触（顶部用于手机下拉状态栏，底部用于播放器进度条及控制按钮）
+      const topDeadzone = Math.min(CFG.deadzoneTop, rect.height * 0.15);
+      const bottomDeadzone = Math.min(CFG.deadzoneBottom, rect.height * 0.18);
+      if (
+        touch.clientY <= rect.top + topDeadzone ||
+        touch.clientY >= rect.bottom - bottomDeadzone
       )
         return null;
     }
