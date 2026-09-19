@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
-// @version      65.18
-// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，默认1.5倍速，默认打开字幕与关闭弹幕。
+// @version      65.19
+// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
@@ -671,6 +671,7 @@
     }
 
     applyDefaultPlaybackRate(video);
+    applyDefaultVolume(video);
     schedulePreferences(video);
 
     return root;
@@ -952,6 +953,7 @@
         `${Math.floor(targetV.currentTime / 60)}:${(Math.floor(targetV.currentTime % 60) + "").padStart(2, "0")}`,
       );
     } else if (action === "vol") {
+      targetV.dataset.gtUserVol = "1";
       targetV.volume = Math.max(
         0,
         Math.min(1, initVol + (dy / innerHeight) * 2 * CFG.senseY),
@@ -1146,6 +1148,31 @@
     }, 200);
   };
 
+  const applyDefaultVolume = (video) => {
+    if (!video || video.tagName !== "VIDEO" || video.dataset.gtDefaultVol) return;
+    video.dataset.gtDefaultVol = "applied";
+    video.muted = false;
+    video.volume = 1.0;
+    setTimeout(() => {
+      if (video.dataset.gtDefaultVol === "applied" && !video.dataset.gtUserVol) {
+        video.muted = false;
+        video.volume = 1.0;
+      }
+    }, 200);
+
+    if (isBilibiliHost()) {
+      const volMutedBtn = document.querySelector(
+        ".bpx-player-ctrl-volume.bpx-state-muted, .bilibili-player-video-btn-volume.video-state-volume-muted",
+      );
+      if (volMutedBtn) {
+        const icon = volMutedBtn.querySelector(
+          ".bpx-player-ctrl-volume-icon, .bilibili-player-iconfont-volume",
+        );
+        (icon || volMutedBtn).click();
+      }
+    }
+  };
+
   const closeDanmaku = () => {
     if (!isBilibiliHost()) return;
     const dmSwitch = document.querySelector(
@@ -1242,6 +1269,17 @@
       tries++;
       closeDanmaku();
       openSubtitle();
+      if (isBilibiliHost()) {
+        const volMutedBtn = document.querySelector(
+          ".bpx-player-ctrl-volume.bpx-state-muted, .bilibili-player-video-btn-volume.video-state-volume-muted",
+        );
+        if (volMutedBtn) {
+          const icon = volMutedBtn.querySelector(
+            ".bpx-player-ctrl-volume-icon, .bilibili-player-iconfont-volume",
+          );
+          (icon || volMutedBtn).click();
+        }
+      }
       if (tries >= 6) {
         clearInterval(timer);
       }
@@ -1250,11 +1288,13 @@
 
   document.addEventListener("play", (e) => {
     applyDefaultPlaybackRate(e.target);
+    applyDefaultVolume(e.target);
     schedulePreferences(e.target);
   }, true);
 
   document.addEventListener("loadedmetadata", (e) => {
     applyDefaultPlaybackRate(e.target);
+    applyDefaultVolume(e.target);
     schedulePreferences(e.target);
   }, true);
 
@@ -1263,6 +1303,8 @@
     if (v && v.tagName === "VIDEO") {
       delete v.dataset.gtDefaultRate;
       delete v.dataset.gtUserSpeed;
+      delete v.dataset.gtDefaultVol;
+      delete v.dataset.gtUserVol;
       delete v.dataset.gtPrefScheduled;
     }
   }, true);
@@ -1276,10 +1318,20 @@
     }
   }, true);
 
+  document.addEventListener("volumechange", (e) => {
+    const v = e.target;
+    if (v && v.tagName === "VIDEO" && v.dataset.gtDefaultVol === "applied") {
+      if (v.muted || v.volume !== 1.0) {
+        v.dataset.gtUserVol = "1";
+      }
+    }
+  }, true);
+
   const scanExistingVideos = () => {
     document.querySelectorAll("video").forEach((v) => {
       if (!v.paused) {
         applyDefaultPlaybackRate(v);
+        applyDefaultVolume(v);
         schedulePreferences(v);
       }
     });
