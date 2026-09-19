@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
-// @version      65.22
-// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量，修复双击全屏状态保持与退出自动暂停问题。
+// @version      65.23
+// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量，全对称闭环修复进出全屏播放与暂停状态保持。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
@@ -75,6 +75,37 @@
   let enforceStateUntil = 0;
   let enforceTarget = null;
   let wasPlayingBeforeFullscreenToggle = false;
+  let activeFullscreenVideo = null;
+
+  const syncPlaybackStateAfterTransition = () => {
+    const shouldPlay =
+      enforceTarget === "playing" || wasPlayingBeforeFullscreenToggle;
+    const shouldPause =
+      enforceTarget === "paused" ||
+      (!wasPlayingBeforeFullscreenToggle && enforceTarget !== "playing");
+
+    const v =
+      activeFullscreenVideo || targetV || document.querySelector("video");
+    if (!v) return;
+
+    if (shouldPlay) {
+      if (v.paused) {
+        v.play().catch(() => {});
+      }
+    } else if (shouldPause) {
+      if (!v.paused) {
+        v.pause();
+      }
+    }
+  };
+
+  const schedulePlaybackStateEnforcement = (duration = 2000) => {
+    const end = Date.now() + duration;
+    enforceStateUntil = Math.max(enforceStateUntil, end);
+    [0, 80, 200, 400, 700, 1100, 1600].forEach((delay) => {
+      setTimeout(syncPlaybackStateAfterTransition, delay);
+    });
+  };
 
   window.addEventListener("message", (e) => {
     if (e.data && e.data.type === "gt_lock_orientation") {
@@ -148,6 +179,7 @@
   hijackFullscreenAPI();
 
   const toggleNativeFullscreen = (container, video) => {
+    activeFullscreenVideo = video || container.querySelector("video") || targetV;
     const isFS =
       !!(document.fullscreenElement || document.webkitFullscreenElement) ||
       container.classList.contains("gt-fullscreen-active");
@@ -174,6 +206,7 @@
           window.top.postMessage({ type: "gt_unlock_orientation" }, "*");
         } catch (e) {}
       }
+      schedulePlaybackStateEnforcement(2500);
     } else {
       const forceLockLandscape = () => {
         const dir =
@@ -181,14 +214,19 @@
             ? "portrait"
             : "landscape";
         if (screen.orientation?.lock) {
-          screen.orientation.lock(dir).catch(() => {
-            try {
-              window.top.postMessage(
-                { type: "gt_lock_orientation", dir: dir },
-                "*",
-              );
-            } catch (err) {}
-          });
+          screen.orientation
+            .lock(dir)
+            .catch(() => {
+              try {
+                window.top.postMessage(
+                  { type: "gt_lock_orientation", dir: dir },
+                  "*",
+                );
+              } catch (err) {}
+            })
+            .finally(() => {
+              syncPlaybackStateAfterTransition();
+            });
         } else {
           try {
             window.top.postMessage(
@@ -196,6 +234,7 @@
               "*",
             );
           } catch (err) {}
+          syncPlaybackStateAfterTransition();
         }
       };
 
@@ -223,6 +262,7 @@
           fsBtn.click();
         } catch (e) {}
       }
+      schedulePlaybackStateEnforcement(2500);
     }
   };
 
@@ -674,11 +714,18 @@
 
     if (!video.dataset.gtStateLock) {
       video.addEventListener("pause", () => {
-        if (Date.now() < enforceStateUntil && enforceTarget === "playing")
+        if (
+          Date.now() < enforceStateUntil &&
+          (enforceTarget === "playing" || wasPlayingBeforeFullscreenToggle)
+        )
           video.play().catch(() => {});
       });
       video.addEventListener("play", () => {
-        if (Date.now() < enforceStateUntil && enforceTarget === "paused")
+        if (
+          Date.now() < enforceStateUntil &&
+          (enforceTarget === "paused" ||
+            (!wasPlayingBeforeFullscreenToggle && enforceTarget !== "playing"))
+        )
           video.pause();
       });
       video.dataset.gtStateLock = "true";
@@ -807,7 +854,7 @@
 
     // [修复] 只要处于连击阻塞期（>=2次），直接拦截并锁死播放状态
     if (tapCount >= 2) {
-      blockGestureUntil = now + 500;
+      blockGestureUntil = now + 1000;
       if (e.cancelable) e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
@@ -821,18 +868,18 @@
       const r = refRect.width > 0 ? xInPlayer / refRect.width : 0.5;
       const uiLayer = targetP.querySelector(".gt-ui-layer") || targetP;
 
+      enforceTarget = wasPlayingBeforeSequence ? "playing" : "paused";
+      wasPlayingBeforeFullscreenToggle = wasPlayingBeforeSequence;
+      activeFullscreenVideo = targetV;
+      schedulePlaybackStateEnforcement(2500);
+
       if (r < 0.3) handleAccumulatedSeek("left", uiLayer, targetV);
       else if (r > 0.7) handleAccumulatedSeek("right", uiLayer, targetV);
       else if (tapCount === 2) {
-        wasPlayingBeforeFullscreenToggle = wasPlayingBeforeSequence;
         toggleNativeFullscreen(targetP, targetV);
       }
 
-      enforceTarget = wasPlayingBeforeSequence ? "playing" : "paused";
-      enforceStateUntil = now + 1500;
-      if (enforceTarget === "playing" && targetV.paused)
-        targetV.play().catch(() => {});
-      else if (enforceTarget === "paused" && !targetV.paused) targetV.pause();
+      syncPlaybackStateAfterTransition();
 
       isTouch = false; // 标记本序列已被阻断，无需追踪常规手势
       if (getFS()) hideUI(targetP);
@@ -1123,26 +1170,12 @@
             window.top.postMessage({ type: "gt_unlock_orientation" }, "*");
           } catch (e) {}
         }
-        if (enforceTarget === "playing" || wasPlayingBeforeFullscreenToggle) {
-          const v = targetV || document.querySelector("video");
-          if (v && v.paused) {
-            v.play().catch(() => {});
-          }
-          setTimeout(() => {
-            if (
-              enforceTarget === "playing" ||
-              wasPlayingBeforeFullscreenToggle
-            ) {
-              const v2 = targetV || document.querySelector("video");
-              if (v2 && v2.paused) {
-                v2.play().catch(() => {});
-              }
-            }
-          }, 300);
-        }
+        schedulePlaybackStateEnforcement(2000);
       } else {
+        schedulePlaybackStateEnforcement(2000);
         setTimeout(() => {
-          let v = targetV || document.querySelector("video");
+          let v =
+            activeFullscreenVideo || targetV || document.querySelector("video");
           let root = fsEl;
           if (root && root.tagName === "VIDEO") root = root.parentNode;
           wakeUpUI(root, v);
@@ -1152,14 +1185,19 @@
                 ? "portrait"
                 : "landscape";
             if (screen.orientation?.lock) {
-              screen.orientation.lock(dir).catch(() => {
-                try {
-                  window.top.postMessage(
-                    { type: "gt_lock_orientation", dir: dir },
-                    "*",
-                  );
-                } catch (err) {}
-              });
+              screen.orientation
+                .lock(dir)
+                .catch(() => {
+                  try {
+                    window.top.postMessage(
+                      { type: "gt_lock_orientation", dir: dir },
+                      "*",
+                    );
+                  } catch (err) {}
+                })
+                .finally(() => {
+                  syncPlaybackStateAfterTransition();
+                });
             } else {
               try {
                 window.top.postMessage(
@@ -1167,9 +1205,10 @@
                   "*",
                 );
               } catch (err) {}
+              syncPlaybackStateAfterTransition();
             }
           }
-        }, 200);
+        }, 150);
       }
     });
   });
@@ -1408,7 +1447,10 @@
     (e) => {
       const v = e.target;
       if (v && v.tagName === "VIDEO") {
-        if (Date.now() < enforceStateUntil && enforceTarget === "playing") {
+        if (
+          Date.now() < enforceStateUntil &&
+          (enforceTarget === "playing" || wasPlayingBeforeFullscreenToggle)
+        ) {
           v.play().catch(() => {});
         }
       }
@@ -1421,7 +1463,11 @@
     (e) => {
       const v = e.target;
       if (v && v.tagName === "VIDEO") {
-        if (Date.now() < enforceStateUntil && enforceTarget === "paused") {
+        if (
+          Date.now() < enforceStateUntil &&
+          (enforceTarget === "paused" ||
+            (!wasPlayingBeforeFullscreenToggle && enforceTarget !== "playing"))
+        ) {
           v.pause();
         }
       }
