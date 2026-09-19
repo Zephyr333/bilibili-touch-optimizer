@@ -78,33 +78,38 @@
   let activeFullscreenVideo = null;
 
   const syncPlaybackStateAfterTransition = () => {
-    const shouldPlay =
-      enforceTarget === "playing" || wasPlayingBeforeFullscreenToggle;
-    const shouldPause =
-      enforceTarget === "paused" ||
-      (!wasPlayingBeforeFullscreenToggle && enforceTarget !== "playing");
+    if (Date.now() > enforceStateUntil) return;
+    if (!enforceTarget) return;
 
     const v =
       activeFullscreenVideo || targetV || document.querySelector("video");
     if (!v) return;
 
-    if (shouldPlay) {
+    if (enforceTarget === "playing") {
       if (v.paused) {
         v.play().catch(() => {});
       }
-    } else if (shouldPause) {
+    } else if (enforceTarget === "paused") {
       if (!v.paused) {
         v.pause();
       }
     }
   };
 
-  const schedulePlaybackStateEnforcement = (duration = 2000) => {
+  const schedulePlaybackStateEnforcement = (duration = 2500) => {
+    if (!enforceTarget) return;
     const end = Date.now() + duration;
     enforceStateUntil = Math.max(enforceStateUntil, end);
-    [0, 80, 200, 400, 700, 1100, 1600].forEach((delay) => {
+    [0, 80, 200, 400, 700, 1100, 1600, 2200].forEach((delay) => {
       setTimeout(syncPlaybackStateAfterTransition, delay);
     });
+    setTimeout(() => {
+      if (Date.now() >= enforceStateUntil) {
+        enforceTarget = null;
+        wasPlayingBeforeFullscreenToggle = false;
+        activeFullscreenVideo = null;
+      }
+    }, duration + 100);
   };
 
   window.addEventListener("message", (e) => {
@@ -714,18 +719,11 @@
 
     if (!video.dataset.gtStateLock) {
       video.addEventListener("pause", () => {
-        if (
-          Date.now() < enforceStateUntil &&
-          (enforceTarget === "playing" || wasPlayingBeforeFullscreenToggle)
-        )
+        if (Date.now() < enforceStateUntil && enforceTarget === "playing")
           video.play().catch(() => {});
       });
       video.addEventListener("play", () => {
-        if (
-          Date.now() < enforceStateUntil &&
-          (enforceTarget === "paused" ||
-            (!wasPlayingBeforeFullscreenToggle && enforceTarget !== "playing"))
-        )
+        if (Date.now() < enforceStateUntil && enforceTarget === "paused")
           video.pause();
       });
       video.dataset.gtStateLock = "true";
@@ -1447,10 +1445,7 @@
     (e) => {
       const v = e.target;
       if (v && v.tagName === "VIDEO") {
-        if (
-          Date.now() < enforceStateUntil &&
-          (enforceTarget === "playing" || wasPlayingBeforeFullscreenToggle)
-        ) {
+        if (Date.now() < enforceStateUntil && enforceTarget === "playing") {
           v.play().catch(() => {});
         }
       }
@@ -1463,11 +1458,7 @@
     (e) => {
       const v = e.target;
       if (v && v.tagName === "VIDEO") {
-        if (
-          Date.now() < enforceStateUntil &&
-          (enforceTarget === "paused" ||
-            (!wasPlayingBeforeFullscreenToggle && enforceTarget !== "playing"))
-        ) {
+        if (Date.now() < enforceStateUntil && enforceTarget === "paused") {
           v.pause();
         }
       }
