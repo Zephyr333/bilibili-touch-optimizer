@@ -357,7 +357,7 @@
 
       // 上下边缘窄条防误触（顶部用于手机下拉状态栏，底部用于播放器进度条及控制按钮）
       const topDeadzone = Math.min(CFG.deadzoneTop, rect.height * 0.15);
-      const bottomDeadzone = Math.min(CFG.deadzoneBottom, rect.height * 0.18);
+      const bottomDeadzone = Math.min(CFG.deadzoneBottom, rect.height * 0.35);
       if (
         touch.clientY <= rect.top + topDeadzone ||
         touch.clientY >= rect.bottom - bottomDeadzone
