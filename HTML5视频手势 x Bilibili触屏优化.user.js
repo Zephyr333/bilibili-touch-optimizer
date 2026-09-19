@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
-// @version      65.21
-// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，强力默认解静音与100%音量。
+// @version      65.22
+// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量，修复双击全屏状态保持与退出自动暂停问题。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
@@ -74,6 +74,7 @@
   let suppressContextMenuUntil = 0;
   let enforceStateUntil = 0;
   let enforceTarget = null;
+  let wasPlayingBeforeFullscreenToggle = false;
 
   window.addEventListener("message", (e) => {
     if (e.data && e.data.type === "gt_lock_orientation") {
@@ -151,18 +152,21 @@
       !!(document.fullscreenElement || document.webkitFullscreenElement) ||
       container.classList.contains("gt-fullscreen-active");
     const fsBtn = container.querySelector(
-      '.art-icon-fullscreenOn, .art-control-fullscreen, .dplayer-full-icon, .plyr__control[data-plyr="fullscreen"], .vjs-fullscreen-control, .xgplayer-fullscreen, .tcplayer-fullscreen-btn, .prism-fullscreen-btn, [aria-label*="全屏"], [title*="全屏"], .fullscreen-btn, .bilibili-player-video-btn-fullscreen',
+      '.bpx-player-ctrl-full, .bilibili-player-video-btn-fullscreen, .art-icon-fullscreenOn, .art-control-fullscreen, .dplayer-full-icon, .plyr__control[data-plyr="fullscreen"], .vjs-fullscreen-control, .xgplayer-fullscreen, .tcplayer-fullscreen-btn, .prism-fullscreen-btn, .fullscreen-btn, [aria-label="全屏"], [title="全屏"], [aria-label="退出全屏"], [title="退出全屏"]',
     );
 
     if (isFS) {
-      if (fsBtn) {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+      } else if (video && video.webkitExitFullscreen) {
+        video.webkitExitFullscreen();
+      } else if (fsBtn) {
         try {
           fsBtn.click();
         } catch (e) {}
       }
-
-      if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
-      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
       container.classList.remove("gt-fullscreen-active");
       if (screen.orientation?.unlock) {
         screen.orientation.unlock();
@@ -195,12 +199,6 @@
         }
       };
 
-      if (fsBtn) {
-        try {
-          fsBtn.click();
-        } catch (e) {}
-      }
-
       container.classList.add("gt-fullscreen-active");
       const reqFs =
         container.requestFullscreen ||
@@ -220,6 +218,10 @@
       } else if (video.webkitEnterFullscreen) {
         video.webkitEnterFullscreen();
         setTimeout(forceLockLandscape, 150);
+      } else if (fsBtn) {
+        try {
+          fsBtn.click();
+        } catch (e) {}
       }
     }
   };
@@ -821,10 +823,13 @@
 
       if (r < 0.3) handleAccumulatedSeek("left", uiLayer, targetV);
       else if (r > 0.7) handleAccumulatedSeek("right", uiLayer, targetV);
-      else if (tapCount === 2) toggleNativeFullscreen(targetP, targetV);
+      else if (tapCount === 2) {
+        wasPlayingBeforeFullscreenToggle = wasPlayingBeforeSequence;
+        toggleNativeFullscreen(targetP, targetV);
+      }
 
       enforceTarget = wasPlayingBeforeSequence ? "playing" : "paused";
-      enforceStateUntil = now + 800;
+      enforceStateUntil = now + 1500;
       if (enforceTarget === "playing" && targetV.paused)
         targetV.play().catch(() => {});
       else if (enforceTarget === "paused" && !targetV.paused) targetV.pause();
@@ -1118,6 +1123,23 @@
             window.top.postMessage({ type: "gt_unlock_orientation" }, "*");
           } catch (e) {}
         }
+        if (enforceTarget === "playing" || wasPlayingBeforeFullscreenToggle) {
+          const v = targetV || document.querySelector("video");
+          if (v && v.paused) {
+            v.play().catch(() => {});
+          }
+          setTimeout(() => {
+            if (
+              enforceTarget === "playing" ||
+              wasPlayingBeforeFullscreenToggle
+            ) {
+              const v2 = targetV || document.querySelector("video");
+              if (v2 && v2.paused) {
+                v2.play().catch(() => {});
+              }
+            }
+          }, 300);
+        }
       } else {
         setTimeout(() => {
           let v = targetV || document.querySelector("video");
@@ -1375,6 +1397,32 @@
       if (v && v.tagName === "VIDEO" && v.dataset.gtDefaultRate === "applied") {
         if (v.playbackRate !== CFG.defaultPlaybackRate) {
           v.dataset.gtUserSpeed = "1";
+        }
+      }
+    },
+    true,
+  );
+
+  document.addEventListener(
+    "pause",
+    (e) => {
+      const v = e.target;
+      if (v && v.tagName === "VIDEO") {
+        if (Date.now() < enforceStateUntil && enforceTarget === "playing") {
+          v.play().catch(() => {});
+        }
+      }
+    },
+    true,
+  );
+
+  document.addEventListener(
+    "play",
+    (e) => {
+      const v = e.target;
+      if (v && v.tagName === "VIDEO") {
+        if (Date.now() < enforceStateUntil && enforceTarget === "paused") {
+          v.pause();
         }
       }
     },
