@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
-// @version      65.17
-// @description  保留HTML5视频手势核心逻辑，并融合B站播放器长按防右键菜单。
+// @version      65.18
+// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，默认1.5倍速，默认打开字幕与关闭弹幕。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
@@ -671,6 +671,7 @@
     }
 
     applyDefaultPlaybackRate(video);
+    schedulePreferences(video);
 
     return root;
   };
@@ -1145,12 +1146,116 @@
     }, 200);
   };
 
+  const closeDanmaku = () => {
+    if (!isBilibiliHost()) return;
+    const dmSwitch = document.querySelector(
+      ".bpx-player-dm-switch, .bilibili-player-video-danmaku-switch",
+    );
+    if (!dmSwitch) return;
+
+    const checkbox = dmSwitch.querySelector('input[type="checkbox"]');
+    if (checkbox) {
+      if (checkbox.checked) checkbox.click();
+    } else {
+      const isOpen =
+        dmSwitch.getAttribute("data-state") === "opened" ||
+        dmSwitch.classList.contains("bui-switch-checked") ||
+        Boolean(
+          dmSwitch.querySelector(".bui-switch-checked, .bui-checkbox-checked"),
+        );
+      if (isOpen) dmSwitch.click();
+    }
+  };
+
+  const openSubtitle = () => {
+    document.querySelectorAll("video").forEach((v) => {
+      if (v.textTracks) {
+        for (let i = 0; i < v.textTracks.length; i++) {
+          const t = v.textTracks[i];
+          if (t.kind === "subtitles" || t.kind === "captions") {
+            t.mode = "showing";
+          }
+        }
+      }
+    });
+
+    if (!isBilibiliHost()) return;
+
+    const subBtn = document.querySelector(
+      ".bpx-player-ctrl-subtitle, .bilibili-player-video-btn-subtitle",
+    );
+    if (!subBtn) return;
+    const style = window.getComputedStyle(subBtn);
+    if (style.display === "none" || subBtn.offsetParent === null) return;
+
+    const isActive = Boolean(
+      document.querySelector(
+        ".bpx-player-ctrl-subtitle-language-item.bpx-state-active",
+      ) ||
+        subBtn.classList.contains("bpx-state-active") ||
+        subBtn.getAttribute("data-state") === "active",
+    );
+    if (isActive) return;
+
+    const panel = document.querySelector(".bpx-player-ctrl-subtitle-box");
+    const isMenuOpen = panel && panel.offsetParent !== null;
+
+    if (isMenuOpen) {
+      const langItem = document.querySelector(
+        ".bpx-player-ctrl-subtitle-language-item[data-lan], .bpx-player-ctrl-subtitle-language-item",
+      );
+      if (langItem) langItem.click();
+    } else {
+      subBtn.click();
+      setTimeout(() => {
+        const langItem = document.querySelector(
+          ".bpx-player-ctrl-subtitle-language-item[data-lan], .bpx-player-ctrl-subtitle-language-item",
+        );
+        if (langItem) {
+          langItem.click();
+          setTimeout(() => {
+            const currentPanel = document.querySelector(
+              ".bpx-player-ctrl-subtitle-box",
+            );
+            if (currentPanel && currentPanel.offsetParent !== null) {
+              subBtn.click();
+            }
+          }, 100);
+        } else {
+          const currentPanel = document.querySelector(
+            ".bpx-player-ctrl-subtitle-box",
+          );
+          if (currentPanel && currentPanel.offsetParent !== null) {
+            subBtn.click();
+          }
+        }
+      }, 200);
+    }
+  };
+
+  const schedulePreferences = (video) => {
+    if (!video || video.dataset.gtPrefScheduled === "1") return;
+    video.dataset.gtPrefScheduled = "1";
+
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries++;
+      closeDanmaku();
+      openSubtitle();
+      if (tries >= 6) {
+        clearInterval(timer);
+      }
+    }, 500);
+  };
+
   document.addEventListener("play", (e) => {
     applyDefaultPlaybackRate(e.target);
+    schedulePreferences(e.target);
   }, true);
 
   document.addEventListener("loadedmetadata", (e) => {
     applyDefaultPlaybackRate(e.target);
+    schedulePreferences(e.target);
   }, true);
 
   document.addEventListener("loadstart", (e) => {
@@ -1158,6 +1263,7 @@
     if (v && v.tagName === "VIDEO") {
       delete v.dataset.gtDefaultRate;
       delete v.dataset.gtUserSpeed;
+      delete v.dataset.gtPrefScheduled;
     }
   }, true);
 
@@ -1172,7 +1278,10 @@
 
   const scanExistingVideos = () => {
     document.querySelectorAll("video").forEach((v) => {
-      if (!v.paused) applyDefaultPlaybackRate(v);
+      if (!v.paused) {
+        applyDefaultPlaybackRate(v);
+        schedulePreferences(v);
+      }
     });
   };
   if (document.readyState === "loading") {
