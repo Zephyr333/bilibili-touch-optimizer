@@ -25,6 +25,7 @@
     uiTimeout: 2500,
     maxScale: 8.0,
     senseRate: 0.015,
+    defaultPlaybackRate: 1.5,
   };
 
   let seekSec = GM_getValue("gt_seek_sec", 10);
@@ -621,6 +622,7 @@
       rstBtn.className = "gt-btn-base gt-reset-speed-btn";
       rstBtn.innerHTML = `<span>1.0x</span>`;
       bindTap(rstBtn, () => {
+        if (video) video.dataset.gtUserSpeed = "1";
         video.playbackRate = 1.0;
         showMsg("恢复原速");
         wakeUpUI(root, video);
@@ -667,6 +669,8 @@
       });
       video.dataset.gtStateLock = "true";
     }
+
+    applyDefaultPlaybackRate(video);
 
     return root;
   };
@@ -1128,4 +1132,52 @@
       }
     });
   });
+
+  const applyDefaultPlaybackRate = (video) => {
+    if (!video || video.tagName !== "VIDEO" || video.dataset.gtDefaultRate) return;
+    video.dataset.gtDefaultRate = "applied";
+    video.defaultPlaybackRate = CFG.defaultPlaybackRate;
+    video.playbackRate = CFG.defaultPlaybackRate;
+    setTimeout(() => {
+      if (video.dataset.gtDefaultRate === "applied" && !video.dataset.gtUserSpeed) {
+        video.playbackRate = CFG.defaultPlaybackRate;
+      }
+    }, 200);
+  };
+
+  document.addEventListener("play", (e) => {
+    applyDefaultPlaybackRate(e.target);
+  }, true);
+
+  document.addEventListener("loadedmetadata", (e) => {
+    applyDefaultPlaybackRate(e.target);
+  }, true);
+
+  document.addEventListener("loadstart", (e) => {
+    const v = e.target;
+    if (v && v.tagName === "VIDEO") {
+      delete v.dataset.gtDefaultRate;
+      delete v.dataset.gtUserSpeed;
+    }
+  }, true);
+
+  document.addEventListener("ratechange", (e) => {
+    const v = e.target;
+    if (v && v.tagName === "VIDEO" && v.dataset.gtDefaultRate === "applied") {
+      if (v.playbackRate !== CFG.defaultPlaybackRate) {
+        v.dataset.gtUserSpeed = "1";
+      }
+    }
+  }, true);
+
+  const scanExistingVideos = () => {
+    document.querySelectorAll("video").forEach((v) => {
+      if (!v.paused) applyDefaultPlaybackRate(v);
+    });
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", scanExistingVideos, { once: true });
+  } else {
+    scanExistingVideos();
+  }
 })();
