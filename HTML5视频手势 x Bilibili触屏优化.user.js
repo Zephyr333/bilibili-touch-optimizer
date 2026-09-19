@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
-// @version      65.20
-// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
+// @version      65.21
+// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，强力默认解静音与100%音量。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
@@ -842,6 +842,10 @@
     initTime = targetV.currentTime;
     initRate = targetV.playbackRate;
 
+    if (targetV && !targetV.dataset.gtUserVol && (targetV.muted || targetV.volume < 1.0)) {
+      applyDefaultVolume(targetV);
+    }
+
     if (e.touches.length === 2) {
       const p = getPinchData(e.touches);
       initPinchDist = p.dist;
@@ -1160,28 +1164,57 @@
     }, 200);
   };
 
+  const unmuteBiliPlayer = () => {
+    if (!isBilibiliHost()) return false;
+    const muteIcon = document.querySelector(
+      ".bpx-player-ctrl-muted-icon, " +
+        ".bilibili-player-iconfont-volume-muted, " +
+        ".bilibili-player-video-btn-volume.video-state-volume-muted, " +
+        ".bpx-player-ctrl-volume[data-state='muted'], " +
+        "[aria-label*='取消静音'], [title*='取消静音'], " +
+        "[aria-label*='开启声音'], [title*='开启声音']",
+    );
+    if (muteIcon) {
+      try {
+        const clickable =
+          muteIcon.closest(
+            ".bpx-player-ctrl-volume-icon, .bpx-player-ctrl-volume, .bilibili-player-video-btn-volume",
+          ) || muteIcon;
+        clickable.click();
+        return true;
+      } catch (err) {}
+    }
+    return false;
+  };
+
   const applyDefaultVolume = (video) => {
-    if (!video || video.tagName !== "VIDEO" || video.dataset.gtDefaultVol) return;
-    video.dataset.gtDefaultVol = "applied";
-    video.muted = false;
-    video.volume = 1.0;
-    setTimeout(() => {
-      if (video.dataset.gtDefaultVol === "applied" && !video.dataset.gtUserVol) {
-        video.muted = false;
+    if (!video || video.tagName !== "VIDEO" || video.dataset.gtUserVol) return;
+
+    if (video.muted) {
+      video.muted = false;
+    }
+    try {
+      if (video.volume !== 1.0) {
         video.volume = 1.0;
       }
-    }, 200);
+    } catch (e) {}
+
+    unmuteBiliPlayer();
 
     if (isBilibiliHost()) {
-      const volMutedBtn = document.querySelector(
-        ".bpx-player-ctrl-volume.bpx-state-muted, .bilibili-player-video-btn-volume.video-state-volume-muted",
-      );
-      if (volMutedBtn) {
-        const icon = volMutedBtn.querySelector(
-          ".bpx-player-ctrl-volume-icon, .bilibili-player-iconfont-volume",
-        );
-        (icon || volMutedBtn).click();
-      }
+      try {
+        const raw = localStorage.getItem("bilibili_player_settings");
+        if (raw) {
+          const cfg = JSON.parse(raw);
+          if (cfg && cfg.video_status && cfg.video_status.volume !== 1) {
+            cfg.video_status.volume = 1;
+            localStorage.setItem(
+              "bilibili_player_settings",
+              JSON.stringify(cfg),
+            );
+          }
+        }
+      } catch (e) {}
     }
   };
 
@@ -1281,75 +1314,149 @@
       tries++;
       closeDanmaku();
       openSubtitle();
-      if (isBilibiliHost()) {
-        const volMutedBtn = document.querySelector(
-          ".bpx-player-ctrl-volume.bpx-state-muted, .bilibili-player-video-btn-volume.video-state-volume-muted",
-        );
-        if (volMutedBtn) {
-          const icon = volMutedBtn.querySelector(
-            ".bpx-player-ctrl-volume-icon, .bilibili-player-iconfont-volume",
-          );
-          (icon || volMutedBtn).click();
-        }
+      if (!video.dataset.gtUserVol) {
+        applyDefaultVolume(video);
       }
-      if (tries >= 6) {
+      if (tries >= 10) {
         clearInterval(timer);
       }
-    }, 500);
+    }, 400);
   };
 
-  document.addEventListener("play", (e) => {
-    applyDefaultPlaybackRate(e.target);
-    applyDefaultVolume(e.target);
-    schedulePreferences(e.target);
-  }, true);
+  document.addEventListener(
+    "play",
+    (e) => {
+      applyDefaultPlaybackRate(e.target);
+      applyDefaultVolume(e.target);
+      schedulePreferences(e.target);
+    },
+    true,
+  );
 
-  document.addEventListener("loadedmetadata", (e) => {
-    applyDefaultPlaybackRate(e.target);
-    applyDefaultVolume(e.target);
-    schedulePreferences(e.target);
-  }, true);
+  document.addEventListener(
+    "playing",
+    (e) => {
+      applyDefaultPlaybackRate(e.target);
+      applyDefaultVolume(e.target);
+      schedulePreferences(e.target);
+    },
+    true,
+  );
 
-  document.addEventListener("loadstart", (e) => {
-    const v = e.target;
-    if (v && v.tagName === "VIDEO") {
-      delete v.dataset.gtDefaultRate;
-      delete v.dataset.gtUserSpeed;
-      delete v.dataset.gtDefaultVol;
-      delete v.dataset.gtUserVol;
-      delete v.dataset.gtPrefScheduled;
-    }
-  }, true);
+  document.addEventListener(
+    "loadedmetadata",
+    (e) => {
+      applyDefaultPlaybackRate(e.target);
+      applyDefaultVolume(e.target);
+      schedulePreferences(e.target);
+    },
+    true,
+  );
 
-  document.addEventListener("ratechange", (e) => {
-    const v = e.target;
-    if (v && v.tagName === "VIDEO" && v.dataset.gtDefaultRate === "applied") {
-      if (v.playbackRate !== CFG.defaultPlaybackRate) {
-        v.dataset.gtUserSpeed = "1";
+  document.addEventListener(
+    "loadstart",
+    (e) => {
+      const v = e.target;
+      if (v && v.tagName === "VIDEO") {
+        delete v.dataset.gtDefaultRate;
+        delete v.dataset.gtUserSpeed;
+        delete v.dataset.gtDefaultVol;
+        delete v.dataset.gtUserVol;
+        delete v.dataset.gtPrefScheduled;
       }
-    }
-  }, true);
+    },
+    true,
+  );
 
-  document.addEventListener("volumechange", (e) => {
-    const v = e.target;
-    if (v && v.tagName === "VIDEO" && v.dataset.gtDefaultVol === "applied") {
-      if (v.muted || v.volume !== 1.0) {
-        v.dataset.gtUserVol = "1";
+  document.addEventListener(
+    "ratechange",
+    (e) => {
+      const v = e.target;
+      if (v && v.tagName === "VIDEO" && v.dataset.gtDefaultRate === "applied") {
+        if (v.playbackRate !== CFG.defaultPlaybackRate) {
+          v.dataset.gtUserSpeed = "1";
+        }
       }
-    }
-  }, true);
+    },
+    true,
+  );
 
-  const scanExistingVideos = () => {
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      if (
+        e.target &&
+        e.target.closest &&
+        e.target.closest(
+          ".bpx-player-ctrl-volume-box, .bpx-player-ctrl-volume-progress, .bilibili-player-volume",
+        )
+      ) {
+        document.querySelectorAll("video").forEach((v) => {
+          v.dataset.gtUserVol = "1";
+        });
+      }
+    },
+    true,
+  );
+
+  document.addEventListener(
+    "click",
+    (e) => {
+      const volBtn =
+        e.target &&
+        e.target.closest &&
+        e.target.closest(
+          ".bpx-player-ctrl-volume, .bilibili-player-video-btn-volume",
+        );
+      if (volBtn) {
+        const isMuted = volBtn.querySelector(
+          ".bpx-player-ctrl-muted-icon, .bilibili-player-iconfont-volume-muted",
+        );
+        if (!isMuted) {
+          document.querySelectorAll("video").forEach((v) => {
+            v.dataset.gtUserVol = "1";
+          });
+        }
+      }
+    },
+    true,
+  );
+
+  const onUserGestureUnmute = (e) => {
+    if (
+      e.target &&
+      e.target.closest &&
+      e.target.closest(
+        ".bpx-player-ctrl-volume, .bilibili-player-video-btn-volume, .bpx-player-ctrl-volume-box",
+      )
+    ) {
+      return;
+    }
     document.querySelectorAll("video").forEach((v) => {
-      if (!v.paused) {
-        applyDefaultPlaybackRate(v);
+      if (!v.dataset.gtUserVol) {
         applyDefaultVolume(v);
-        schedulePreferences(v);
       }
     });
   };
+
+  ["touchstart", "pointerdown", "click"].forEach((evt) => {
+    document.addEventListener(evt, onUserGestureUnmute, {
+      capture: true,
+      passive: true,
+    });
+  });
+
+  const scanExistingVideos = () => {
+    document.querySelectorAll("video").forEach((v) => {
+      applyDefaultPlaybackRate(v);
+      applyDefaultVolume(v);
+      schedulePreferences(v);
+    });
+  };
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", scanExistingVideos, { once: true });
+    document.addEventListener("DOMContentLoaded", scanExistingVideos, {
+      once: true,
+    });
   } else {
     scanExistingVideos();
   }
