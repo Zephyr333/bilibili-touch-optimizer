@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
-// @version      65.16
+// @version      65.17
 // @description  保留HTML5视频手势核心逻辑，并融合B站播放器长按防右键菜单。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
@@ -846,7 +846,7 @@
       lpTimer = setTimeout(() => {
         if (isTouch) {
           action = "rate";
-          targetV.playbackRate = Math.max(0.1, initRate + CFG.rateBase - 1.0);
+          targetV.playbackRate = CFG.rateBase;
           showMsg(`${targetV.playbackRate.toFixed(1)}x`);
           if (getFS()) hideUI(targetP);
         }
@@ -916,7 +916,7 @@
     if (action === "rate") {
       targetV.playbackRate = Math.max(
         0.1,
-        Math.min(4.0, initRate + (CFG.rateBase + dx * CFG.senseRate) - 1.0),
+        Math.min(4.0, CFG.rateBase + dx * CFG.senseRate),
       );
       showMsg(`${targetV.playbackRate.toFixed(1)}x`);
       return;
