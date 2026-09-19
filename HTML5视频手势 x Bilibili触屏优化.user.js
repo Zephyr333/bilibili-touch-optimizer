@@ -27,7 +27,7 @@
     senseRate: 0.015,
     defaultPlaybackRate: 1.5,
     deadzoneTop: 36,
-    deadzoneBottom: 44,
+    deadzoneBottom: 100,
   };
 
   let seekSec = GM_getValue("gt_seek_sec", 10);
