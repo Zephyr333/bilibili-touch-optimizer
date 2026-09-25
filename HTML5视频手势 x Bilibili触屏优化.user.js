@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
-// @version      65.23
-// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量，全对称闭环修复进出全屏播放与暂停状态保持。
+// @version      65.24
+// @description  保留HTML5视频手势核心逻辑，修复双击全屏漏判与穿透、双击后单击失效及倍速状态残留，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
@@ -71,6 +71,7 @@
     originDy = 0;
 
   let blockGestureUntil = 0;
+  let suppressClickUntil = 0;
   let suppressContextMenuUntil = 0;
   let enforceStateUntil = 0;
   let enforceTarget = null;
@@ -791,7 +792,6 @@
             "gt-fullscreen-active",
             "gt-ui-visible",
           );
-          el.style.cssText = "";
         });
     }
 
@@ -828,11 +828,14 @@
     clearTimeout(lpTimer);
     const now = Date.now();
 
-    // [修复] 引入连击追踪，抛弃旧版的双击清零逻辑
-    const isRapid = now - lastTapTime < 350;
+    // [修复] 引入连击追踪，对齐浏览器与Hammer 500ms双击判定窗口
+    const isRapid = now - lastTapTime < 500;
     if (!isRapid) {
       tapCount = 1;
       wasPlayingBeforeSequence = targetV ? !targetV.paused : false;
+      enforceStateUntil = 0;
+      enforceTarget = null;
+      activeFullscreenVideo = null;
     } else {
       tapCount++;
     }
@@ -853,6 +856,7 @@
     // [修复] 只要处于连击阻塞期（>=2次），直接拦截并锁死播放状态
     if (tapCount >= 2) {
       blockGestureUntil = now + 1000;
+      suppressClickUntil = now + 500;
       if (e.cancelable) e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
@@ -1038,12 +1042,31 @@
   const onEnd = (e) => {
     const now = Date.now();
 
+    const cleanupGestureState = () => {
+      clearTimeout(lpTimer);
+      if (action === "rate" && targetV) {
+        targetV.playbackRate = initRate;
+        showMsg("");
+      }
+      if (pendingRate !== null && targetV) {
+        targetV.playbackRate = pendingRate;
+        pendingRate = null;
+      }
+      action = null;
+      isTouch = false;
+      targetV = null;
+    };
+
+    if (tapCount >= 2) {
+      suppressClickUntil = Math.max(suppressClickUntil, now + 400);
+    }
+
     // [修复] 尾随物理拦截墙：暴力拦截连击状态下的所有 touchend 遗漏
     if (now < blockGestureUntil && !findUp(e.target, ".gt-btn-base")) {
       e.stopPropagation();
       e.stopImmediatePropagation();
       if (e.cancelable) e.preventDefault();
-      isTouch = false;
+      cleanupGestureState();
       return;
     }
 
@@ -1055,10 +1078,13 @@
         e.stopPropagation();
         e.stopImmediatePropagation();
       }
-      isTouch = false;
+      cleanupGestureState();
       return;
     }
-    if (!isTouch) return;
+    if (!isTouch) {
+      cleanupGestureState();
+      return;
+    }
     if (e.touches.length > 0) {
       if (action === "pinch") action = "pinch_wait";
       return;
@@ -1088,13 +1114,13 @@
       blockGestureUntil = now + 500;
     }
 
+    const pRef = targetP;
+    const vRef = targetV;
     setTimeout(() => {
-      if (targetP && !getFS()) targetP.classList.remove("gt-lock-touch");
-      if (targetV) targetV.classList.remove("gt-lock-touch");
+      if (pRef && !getFS()) pRef.classList.remove("gt-lock-touch");
+      if (vRef) vRef.classList.remove("gt-lock-touch");
     }, 100);
-    isTouch = false;
-    targetV = null;
-    action = null;
+    cleanupGestureState();
   };
 
   const pOpt = { passive: false, capture: true };
@@ -1119,11 +1145,29 @@
               state.isScreenLocked &&
               !findUp(e.target, ".gt-btn-base") &&
               (!!getFS() || (targetP && targetP.contains(e.target)));
-            if (activeSeekSide || isL) {
+            if (Date.now() < suppressClickUntil || isL) {
               e.stopPropagation();
               e.stopImmediatePropagation();
               e.preventDefault();
               if (isL && targetP && targetV) wakeUpUI(targetP, targetV);
+            }
+          } else if (evt === "dblclick") {
+            const isTouchGenerated =
+              e.sourceCapabilities?.firesTouchEvents ||
+              (e.pointerType && e.pointerType === "touch") ||
+              Date.now() - lastTapTime < 700;
+            const onVideo =
+              e.target.tagName === "VIDEO" ||
+              !!findUp(e.target, VIP_SELECTORS) ||
+              (targetP && targetP.contains(e.target));
+            if (
+              (isTouchGenerated || Date.now() < blockGestureUntil) &&
+              onVideo &&
+              !findUp(e.target, ".gt-btn-base")
+            ) {
+              e.preventDefault();
+              e.stopPropagation();
+              e.stopImmediatePropagation();
             }
           }
         },
@@ -1159,6 +1203,11 @@
       let fsEl = getFS();
       if (!fsEl) {
         hideUI(targetP);
+        document
+          .querySelectorAll(".gt-fullscreen-active")
+          .forEach((el) => {
+            el.classList.remove("gt-fullscreen-active", "gt-ui-visible");
+          });
         document
           .querySelectorAll(".gt-lock-touch")
           .forEach((el) => el.classList.remove("gt-lock-touch"));
