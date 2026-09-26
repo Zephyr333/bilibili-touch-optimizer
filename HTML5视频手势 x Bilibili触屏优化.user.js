@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
-// @version      65.24
-// @description  保留HTML5视频手势核心逻辑，修复双击全屏漏判与穿透、双击后单击失效及倍速状态残留，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
+// @version      65.25
+// @description  保留HTML5视频手势核心逻辑，修复B站首页及各页面输入框焦点误触视频控件，修复双击全屏漏判与穿透、双击后单击失效及倍速状态残留，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
@@ -354,8 +354,17 @@
     document.mozFullScreenElement ||
     document.msFullscreenElement;
 
+  const isInteractiveInput = (el) => {
+    return !!findUp(
+      el,
+      "input, textarea, select, [contenteditable='true'], [contenteditable=''], [role='textbox'], [role='searchbox'], .nav-search-content, .nav-search-form",
+    );
+  };
+
   const identify = (e) => {
     const t = e.target;
+    if (isInteractiveInput(t)) return null;
+
     let targetVideo = null;
     let rootContainer = null;
 
@@ -372,11 +381,18 @@
     if (!targetVideo) {
       const videos = document.querySelectorAll("video");
       if (videos.length > 0) {
-        targetVideo = Array.from(videos).sort(
+        targetVideo = Array.from(videos).filter((v) => {
+          if (!v || v.clientWidth <= 50) return false;
+          // 排除顶栏 Banner、动画背景等非播放类装饰性视频
+          if (findUp(v, ".bili-header, .animated-banner, header, [role='banner']")) {
+            return false;
+          }
+          return true;
+        }).sort(
           (a, b) =>
             b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight,
         )[0];
-        if (targetVideo && targetVideo.clientWidth > 50) {
+        if (targetVideo) {
           rootContainer =
             findUp(targetVideo, VIP_SELECTORS) || targetVideo.parentNode;
         } else targetVideo = null;
@@ -387,6 +403,17 @@
 
     if (rootContainer && rootContainer.tagName === "VIDEO") {
       rootContainer = rootContainer.parentNode;
+    }
+
+    // 兜底命中时，若触点目标完全不属于视频或其容器层级（例如悬浮在视频上方的无关顶栏/输入框），则不予接管
+    if (
+      rootContainer &&
+      rootContainer !== document.body &&
+      rootContainer !== document.documentElement &&
+      !rootContainer.contains(t) &&
+      targetVideo !== t
+    ) {
+      return null;
     }
 
     if (e.touches && e.touches.length > 0) {
@@ -793,6 +820,11 @@
             "gt-ui-visible",
           );
         });
+    }
+
+    if (isInteractiveInput(e.target)) {
+      clearTimeout(lpTimer);
+      return;
     }
 
     const isBtn = findUp(e.target, ".gt-btn-base");
@@ -1567,6 +1599,9 @@
       return;
     }
     document.querySelectorAll("video").forEach((v) => {
+      if (findUp(v, ".bili-header, .animated-banner, header, [role='banner']")) {
+        return;
+      }
       if (!v.dataset.gtUserVol) {
         applyDefaultVolume(v);
       }
@@ -1582,6 +1617,9 @@
 
   const scanExistingVideos = () => {
     document.querySelectorAll("video").forEach((v) => {
+      if (findUp(v, ".bili-header, .animated-banner, header, [role='banner']")) {
+        return;
+      }
       applyDefaultPlaybackRate(v);
       applyDefaultVolume(v);
       schedulePreferences(v);
