@@ -2,12 +2,11 @@
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
 // @version      65.36
-// @description  保留HTML5视频手势核心逻辑，确立视频全域为脚本统一管理区，彻底杜绝长按右键与底栏文字误选，手势坐标自适应播放器自身边界，提示框与控制按钮物理居中约束，音量亮度与双击快进快退统一为左右各30%（中间40%安全死区），新增亮度100%磁吸卡位与动态一键复位按键，重构悬浮小窗交互与1.0x/1.5x双态互切，确立顶栏与底栏边缘控制区统合守卫，移除冗余刷新与步进按键并固定10s快进快退，恢复双指模式切换按键（调速/缩放），支持右下角小窗全屏双向记忆与自动还原（进全屏退出后无缝保持悬浮小窗并还原视距），默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
+// @description  保留HTML5视频手势核心逻辑，确立视频全域为脚本统一管理区，彻底杜绝长按右键与底栏文字误选，手势坐标自适应播放器自身边界，提示框与控制按钮物理居中约束，音量亮度与双击快进快退统一为左右各30%（中间40%安全死区），新增亮度100%磁吸卡位与动态一键复位按键，1.0x/1.5x双态互切，确立顶栏与底栏边缘控制区统合守卫，移除小窗特殊逻辑并统一全域控件与手势规范，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
 // @grant        GM_addStyle
-// @grant        unsafeWindow
 // @run-at       document-start
 // ==/UserScript==
 
@@ -83,11 +82,6 @@
   let enforceTarget = null;
   let wasPlayingBeforeFullscreenToggle = false;
   let activeFullscreenVideo = null;
-  let wasMiniBeforeFullscreen = false;
-  let savedScrollX = 0;
-  let savedScrollY = 0;
-  let savedMiniContainer = null;
-  let restoreMiniUntil = 0;
 
   const syncPlaybackStateAfterTransition = () => {
     if (Date.now() > enforceStateUntil) return;
@@ -145,109 +139,6 @@
   };
   const isBilibiliHost = () => /(^|\.)bilibili\.com$/i.test(location.hostname);
 
-  function checkIsMini(c) {
-    if (!c) {
-      c = targetP || document.querySelector(".bpx-player-container, #bilibili-player");
-    }
-    if (!c) return false;
-    if (
-      c.classList?.contains("bpx-state-mini") ||
-      c.classList?.contains("mini-player") ||
-      c.getAttribute?.("data-screen") === "mini" ||
-      c.classList?.contains("gt-small-mode") ||
-      !!findUp(c, ".bpx-state-mini, [data-screen='mini'], [class*='mini-player']") ||
-      !!c.querySelector?.(".bpx-state-mini, [data-screen='mini'], .mini-player")
-    ) {
-      return true;
-    }
-    const h = c.clientHeight;
-    if (h > 0 && h < 240) return true;
-    if (isBilibiliHost()) {
-      const scrollY = window.scrollY || window.pageYOffset || 0;
-      const wrap = document.querySelector("#playerWrap, #bilibili-player, .player-wrap");
-      if (scrollY > 300 && wrap) {
-        const rect = wrap.getBoundingClientRect();
-        if (rect.bottom < 100) return true;
-      }
-    }
-    return false;
-  }
-
-  function restoreMiniPlayerState() {
-    if (!wasMiniBeforeFullscreen) return;
-    const c =
-      savedMiniContainer ||
-      targetP ||
-      document.querySelector(".bpx-player-container, #bilibili-player");
-    const v =
-      activeFullscreenVideo ||
-      targetV ||
-      c?.querySelector("video") ||
-      document.querySelector("video");
-
-    // 1. 若全屏导致页面滚动条被重置，恢复原视距位置，确保位于小窗触发区
-    if (savedScrollY > 100) {
-      const curY = window.scrollY || window.pageYOffset || 0;
-      if (Math.abs(curY - savedScrollY) > 50) {
-        window.scrollTo(savedScrollX, savedScrollY);
-      }
-    }
-
-    // 2. 派发滚动与窗口缩放事件，唤醒 B 站原生的视口交叉观察器（IntersectionObserver）与滚动感知
-    window.dispatchEvent(new Event("scroll"));
-    window.dispatchEvent(new Event("resize"));
-    document.dispatchEvent(new Event("scroll"));
-
-    // 3. 尝试调用 B 站播放器内部状态机 requestStatue(3) (3 表示 mini 悬浮小窗模式)
-    try {
-      const p =
-        (typeof unsafeWindow !== "undefined" && unsafeWindow.player) ||
-        window.player;
-      if (p && typeof p.requestStatue === "function") {
-        p.requestStatue(3).catch(() => {});
-      }
-    } catch (e) {}
-
-    // 4. DOM 属性与类名强化：如果 B 站尚未切换，直接在 DOM 上注入 mini 标记
-    const mainContainer =
-      (c && (findUp(c, ".bpx-player-container, #bilibili-player") || c.querySelector?.(".bpx-player-container"))) ||
-      c ||
-      document.querySelector(".bpx-player-container, #bilibili-player");
-
-    if (mainContainer) {
-      if (mainContainer.getAttribute("data-screen") !== "mini") {
-        mainContainer.setAttribute("data-screen", "mini");
-      }
-      if (!mainContainer.classList.contains("bpx-state-mini")) {
-        mainContainer.classList.add("bpx-state-mini");
-      }
-      const wrap = findUp(mainContainer, "#bilibili-player, .bilibili-player") || mainContainer;
-      if (wrap && !wrap.classList.contains("mini-player")) {
-        wrap.classList.add("mini-player");
-      }
-      if (c && c !== mainContainer) {
-        c.setAttribute("data-screen", "mini");
-        c.classList.add("bpx-state-mini");
-      }
-      if (typeof updateUIState === "function") updateUIState(mainContainer, v);
-    }
-  }
-
-  function scheduleMiniPlayerRestore(duration = 2500) {
-    if (!wasMiniBeforeFullscreen) return;
-    const end = Date.now() + duration;
-    restoreMiniUntil = Math.max(restoreMiniUntil, end);
-    [0, 50, 120, 250, 500, 900, 1500, 2200].forEach((delay) => {
-      setTimeout(restoreMiniPlayerState, delay);
-    });
-    setTimeout(() => {
-      if (Date.now() >= restoreMiniUntil) {
-        restoreMiniPlayerState();
-        wasMiniBeforeFullscreen = false;
-        savedMiniContainer = null;
-      }
-    }, duration + 100);
-  }
 
   const hijackFullscreenAPI = () => {
     const fsMethods = [
@@ -269,13 +160,6 @@
               target = this.parentNode;
               target.classList.add("gt-fullscreen-active");
             }
-          }
-
-          if (checkIsMini(target) || checkIsMini(this) || checkIsMini()) {
-            wasMiniBeforeFullscreen = true;
-            savedScrollX = window.scrollX || window.pageXOffset || 0;
-            savedScrollY = window.scrollY || window.pageYOffset || 0;
-            savedMiniContainer = target || this;
           }
 
           const promise = originalMethod.apply(target, args);
@@ -302,23 +186,6 @@
         };
       }
     });
-
-    if (
-      typeof HTMLVideoElement !== "undefined" &&
-      HTMLVideoElement.prototype.webkitEnterFullscreen
-    ) {
-      const origWebkitEnterFullscreen =
-        HTMLVideoElement.prototype.webkitEnterFullscreen;
-      HTMLVideoElement.prototype.webkitEnterFullscreen = function (...args) {
-        if (checkIsMini(this) || checkIsMini()) {
-          wasMiniBeforeFullscreen = true;
-          savedScrollX = window.scrollX || window.pageXOffset || 0;
-          savedScrollY = window.scrollY || window.pageYOffset || 0;
-          savedMiniContainer = this;
-        }
-        return origWebkitEnterFullscreen.apply(this, args);
-      };
-    }
   };
   hijackFullscreenAPI();
 
@@ -351,18 +218,7 @@
         } catch (e) {}
       }
       schedulePlaybackStateEnforcement(2500);
-      scheduleMiniPlayerRestore(2500);
     } else {
-      if (checkIsMini(container) || checkIsMini(targetP) || checkIsMini()) {
-        wasMiniBeforeFullscreen = true;
-        savedScrollX = window.scrollX || window.pageXOffset || 0;
-        savedScrollY = window.scrollY || window.pageYOffset || 0;
-        savedMiniContainer = container || targetP;
-      } else {
-        wasMiniBeforeFullscreen = false;
-        savedMiniContainer = null;
-      }
-
       const forceLockLandscape = () => {
         const dir =
           video && video.videoWidth > 0 && video.videoWidth < video.videoHeight
@@ -453,17 +309,7 @@
         
         .gt-ui-layer { position: absolute !important; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none !important; z-index: 2147483647 !important; overflow: hidden !important; border-radius: inherit !important; }
         
-        /* 针对小窗模式（.bpx-state-mini / [data-screen="mini"] / .gt-small-mode）的微缩紧凑型控件排布，彻底杜绝溢出同时保证全部可用 */
-        .bpx-state-mini .gt-btn-base, [data-screen="mini"] .gt-btn-base, [class*="mini-player"] .gt-btn-base, .gt-ui-layer.gt-small-mode .gt-btn-base { width: 20px !important; height: 20px !important; }
-        .bpx-state-mini .gt-btn-base svg, [data-screen="mini"] .gt-btn-base svg, [class*="mini-player"] .gt-btn-base svg, .gt-ui-layer.gt-small-mode .gt-btn-base svg { width: 12px !important; height: 12px !important; }
-        .bpx-state-mini .gt-btn-base span, [data-screen="mini"] .gt-btn-base span, [class*="mini-player"] .gt-btn-base span, .gt-ui-layer.gt-small-mode .gt-btn-base span { font-size: 8px !important; }
-        .bpx-state-mini .gt-reset-speed-btn, [data-screen="mini"] .gt-reset-speed-btn, .gt-ui-layer.gt-small-mode .gt-reset-speed-btn { top: 6px !important; left: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-reset-bri-btn, [data-screen="mini"] .gt-reset-bri-btn, .gt-ui-layer.gt-small-mode .gt-reset-bri-btn { top: 30px !important; left: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-lock-btn, [data-screen="mini"] .gt-lock-btn, .gt-ui-layer.gt-small-mode .gt-lock-btn { top: 6px !important; right: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-mode-btn, [data-screen="mini"] .gt-mode-btn, .gt-ui-layer.gt-small-mode .gt-mode-btn { top: 30px !important; right: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-reset-zoom-btn, [data-screen="mini"] .gt-reset-zoom-btn, .gt-ui-layer.gt-small-mode .gt-reset-zoom-btn { top: 54px !important; right: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-toast, [data-screen="mini"] .gt-toast, [class*="mini-player"] .gt-toast, .gt-ui-layer.gt-small-mode .gt-toast { top: 25% !important; font-size: 11px !important; padding: 2px 6px !important; }
-        
+
         .gt-mini-progress { position: absolute; bottom: 0; left: 0; width: 100%; height: 2px; background: rgba(255,255,255,0.2); z-index: 2147483640; pointer-events: none; overflow: hidden; opacity: 0.9; transition: height 0.2s, opacity 0.3s; box-shadow: 0 -1px 1px rgba(0,0,0,0.2); }
         .gt-mini-progress .gt-fill { height: 100%; width: 0%; background: ${CFG.progressBarColor}; transition: width 0.1s linear; box-shadow: 0 0 4px ${CFG.progressBarColor}; }
         :fullscreen .gt-mini-progress, .gt-fullscreen-active .gt-mini-progress { height: 3px !important; }
@@ -576,7 +422,6 @@
 
     let inTopDeadzone = false;
     let inBottomDeadzone = false;
-    let isSmallPlayer = false;
     const inControls = !!findUp(
       t,
       ".bpx-player-control-bottom, .bpx-player-progress-area, .bpx-player-control-top, .bpx-player-mini-header, .art-bottom, .dplayer-controller",
@@ -594,20 +439,9 @@
       )
         return null;
 
-      isSmallPlayer =
-        rect.height < 240 ||
-        (rootContainer &&
-          (rootContainer.classList?.contains("bpx-state-mini") ||
-            rootContainer.getAttribute?.("data-screen") === "mini" ||
-            !!findUp(rootContainer, ".bpx-state-mini, [data-screen='mini'], [class*='mini-player']")));
-
-      // 上下边缘防误触死区计算：小窗模式尺寸极小，自适应压缩死区至 6px/12px，彻底杜绝起手滑动被丢弃
-      const topDeadzone = isSmallPlayer
-        ? Math.min(6, rect.height * 0.05)
-        : Math.min(CFG.deadzoneTop, rect.height * 0.15);
-      const bottomDeadzone = isSmallPlayer
-        ? Math.min(12, rect.height * 0.1)
-        : Math.min(CFG.deadzoneBottom, rect.height * 0.35);
+      // 上下边缘防误触死区计算：统一按比例与固定阈值计算，不搞特殊化
+      const topDeadzone = Math.min(CFG.deadzoneTop, rect.height * 0.15);
+      const bottomDeadzone = Math.min(CFG.deadzoneBottom, rect.height * 0.35);
 
       inTopDeadzone = touch.clientY <= rect.top + topDeadzone;
       inBottomDeadzone = touch.clientY >= rect.bottom - bottomDeadzone;
@@ -619,7 +453,6 @@
       inTopDeadzone,
       inBottomDeadzone,
       inControls,
-      isSmall: isSmallPlayer,
       isGestureZone: !inTopDeadzone && !inBottomDeadzone && !inControls,
       isNaked:
         !rootContainer.classList?.contains("gt-video-wrapper") &&
@@ -655,12 +488,6 @@
     if (!root) return;
     const uiLayer = root.querySelector(".gt-ui-layer");
     if (!uiLayer) return;
-    const isSmall =
-      (root.clientHeight > 0 && root.clientHeight < 240) ||
-      root.classList?.contains("bpx-state-mini") ||
-      root.getAttribute?.("data-screen") === "mini" ||
-      !!findUp(root, ".bpx-state-mini, [data-screen='mini'], [class*='mini-player']");
-    uiLayer.classList.toggle("gt-small-mode", isSmall);
     const btnLock = uiLayer.querySelector(".gt-lock-btn"),
       btnMode = uiLayer.querySelector(".gt-mode-btn"),
       btnRst = uiLayer.querySelector(".gt-reset-speed-btn"),
@@ -1247,18 +1074,8 @@
           return;
         }
 
-        const isSmallPlayer =
-          playerHeight < 240 ||
-          (targetP &&
-            (targetP.classList?.contains("bpx-state-mini") ||
-              targetP.getAttribute?.("data-screen") === "mini" ||
-              !!findUp(targetP, ".bpx-state-mini, [data-screen='mini'], [class*='mini-player']")));
-
         if (Math.abs(dx) > Math.abs(dy)) {
           action = "seek";
-        } else if (isSmallPlayer) {
-          // 悬浮小窗模式：因物理尺寸受限，回退为以小窗中线自然二分左右手势（左调光、右调音），消除中间40%的盲区
-          action = startX < (playerCenterX || innerWidth / 2) ? "bri" : "vol";
         } else if (startRatio < 0.3) {
           action = "bri";
         } else if (startRatio > 0.7) {
@@ -1534,7 +1351,6 @@
           } catch (e) {}
         }
         schedulePlaybackStateEnforcement(2000);
-        scheduleMiniPlayerRestore(2500);
       } else {
         schedulePlaybackStateEnforcement(2000);
         setTimeout(() => {
