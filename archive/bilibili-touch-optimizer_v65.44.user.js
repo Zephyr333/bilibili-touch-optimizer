@@ -1,15 +1,14 @@
 // ==UserScript==
 // @name         bilibili-touch-optimizer
 // @namespace    https://github.com/Zephyr333/bilibili-touch-optimizer
-// @version      65.46
-// @description  B站HTML5视频触屏手势优化，彻底移除所有自带功能按键与锁屏遮罩，界面纯净零侵入；彻底排除直播域名（live.bilibili.com）手势接管与冲突；顶部防误触区禁止触发播放与暂停；视频完播/报错状态守卫即时卸载；跨区域双击连击隔离与Seek换向累加器清零；手机端高影响性能专项优化（Seek 40ms 降频防卡顿、Toast 零重排、微缩进度条 GPU 合成、解静音极速守卫与偏好轮询早退）；双指手势固定为0.25x步长档位调速（附带切档触觉反馈）；保留居中Toast、双击Seek动画指示与底部2px微缩进度条；左右30%分别调节亮度（含100%磁吸卡位）与音量，中间40%双击全屏与长按3.0x加速；默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
+// @version      65.44
+// @description  B站HTML5视频触屏手势优化，彻底移除所有自带功能按键与锁屏遮罩，界面纯净零侵入；顶部防误触区禁止触发播放与暂停；视频完播/报错状态守卫即时卸载；双击Seek快速换向累加器隔离清零；手机端高影响性能专项优化（Seek 40ms 降频防卡顿、Toast 零重排、微缩进度条 GPU 合成、解静音极速守卫与偏好轮询早退）；双指手势固定为0.25x步长档位调速（附带切档触觉反馈）；保留居中Toast、双击Seek动画指示与底部2px微缩进度条；左右30%分别调节亮度（含100%磁吸卡位）与音量，中间40%双击全屏与长按3.0x加速；默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
 // @author       Zephyr Three, Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @homepageURL  https://github.com/Zephyr333/bilibili-touch-optimizer
 // @supportURL   https://github.com/Zephyr333/bilibili-touch-optimizer/issues
 // @match        *://*.bilibili.com/*
 // @match        *://bilibili.com/*
-// @exclude      *://live.bilibili.com/*
 // @grant        GM_addStyle
 // @run-at       document-start
 // ==/UserScript==
@@ -17,7 +16,7 @@
 (function () {
   "use strict";
 
-  if (!/(^|\.)bilibili\.com$/i.test(location.hostname) || /(^|\.)live\.bilibili\.com$/i.test(location.hostname)) {
+  if (!/(^|\.)bilibili\.com$/i.test(location.hostname)) {
     return;
   }
 
@@ -53,8 +52,7 @@
     lpTimer = null,
     toastTimer = null,
     lastTapTime = 0,
-    tapCount = 0,
-    lastTapZone = null;
+    tapCount = 0;
   let startInTopDeadzone = false,
     startInBottomDeadzone = false,
     startInControls = false;
@@ -142,9 +140,7 @@
   const TOP_CONTROLS_SELECTORS =
     ".bpx-player-control-bottom, .bpx-player-progress-area, .bpx-player-control-top, .bpx-player-top, .bpx-player-top-wrap, .bilibili-player-video-top, .bpx-player-mini-header, .art-bottom, .dplayer-controller";
 
-  const isBilibiliHost = () =>
-    /(^|\.)bilibili\.com$/i.test(location.hostname) &&
-    !/(^|\.)live\.bilibili\.com$/i.test(location.hostname);
+  const isBilibiliHost = () => /(^|\.)bilibili\.com$/i.test(location.hostname);
 
   const isEventInTopDeadzone = (e, playerEl) => {
     if (!e || e.isTrusted === false) return false;
@@ -655,16 +651,10 @@
     const isEdgeOrControls =
       startInTopDeadzone || startInBottomDeadzone || startInControls;
 
-    // 记录播放器几何参数（自适应全屏、普通居中及悬浮小窗）与触控区域
+    // 记录播放器几何参数（自适应全屏、普通居中及悬浮小窗）
     const pRect = (targetP || targetV).getBoundingClientRect();
     playerCenterX = pRect.left + pRect.width / 2;
     playerHeight = Math.max(100, pRect.height);
-
-    const touchX = e.touches?.[0]?.clientX ?? e.clientX;
-    const xInPlayer = Math.max(0, Math.min(pRect.width, touchX - pRect.left));
-    const currentRatio = pRect.width > 0 ? xInPlayer / pRect.width : 0.5;
-    const currentZone =
-      currentRatio < 0.3 ? "left" : currentRatio > 0.7 ? "right" : "center";
 
     // 凡触碰进入视频管理区，加锁屏蔽右键菜单并清理历史选区残留
     if (isBilibiliHost()) {
@@ -682,7 +672,6 @@
     if (isEdgeOrControls) {
       tapCount = 0;
       lastTapTime = 0;
-      lastTapZone = null;
       if (startInTopDeadzone && targetV) {
         wasPlayingBeforeSequence = !targetV.paused;
         enforceTarget = wasPlayingBeforeSequence ? "playing" : "paused";
@@ -695,17 +684,15 @@
       enforceStateUntil = 0;
       enforceTarget = null;
 
-      // 引入连击追踪，对齐浏览器与Hammer 500ms双击判定窗口，并严格隔离跨半区连击
+      // 引入连击追踪，对齐浏览器与Hammer 500ms双击判定窗口
       const isRapid = now - lastTapTime < 500;
-      const isSameZone = isRapid && lastTapZone === currentZone;
-      if (!isSameZone) {
+      if (!isRapid) {
         tapCount = 1;
         wasPlayingBeforeSequence = targetV ? !targetV.paused : false;
         activeFullscreenVideo = null;
       } else {
         tapCount++;
       }
-      lastTapZone = currentZone;
     }
     lastTapTime = now;
 
@@ -714,7 +701,6 @@
       e.stopPropagation();
       e.stopImmediatePropagation();
       tapCount = 0; // 如果检测到双指，则打断连击链条
-      lastTapZone = null;
       enforceTarget = wasPlayingBeforeSequence ? "playing" : "paused";
       enforceStateUntil = now + 800;
       if (enforceTarget === "playing" && targetV.paused && !targetV.ended && !targetV.error)
@@ -730,6 +716,13 @@
       e.stopPropagation();
       e.stopImmediatePropagation();
 
+      const touchX = e.touches ? e.touches[0].clientX : e.clientX;
+      const refRect = (targetP || targetV).getBoundingClientRect();
+      const xInPlayer = Math.max(
+        0,
+        Math.min(refRect.width, touchX - refRect.left),
+      );
+      const r = refRect.width > 0 ? xInPlayer / refRect.width : 0.5;
       const uiLayer = targetP.querySelector(".gt-ui-layer") || targetP;
 
       enforceTarget = wasPlayingBeforeSequence ? "playing" : "paused";
@@ -737,8 +730,8 @@
       activeFullscreenVideo = targetV;
       schedulePlaybackStateEnforcement(2500);
 
-      if (currentZone === "left") handleAccumulatedSeek("left", uiLayer, targetV);
-      else if (currentZone === "right") handleAccumulatedSeek("right", uiLayer, targetV);
+      if (r < 0.3) handleAccumulatedSeek("left", uiLayer, targetV);
+      else if (r > 0.7) handleAccumulatedSeek("right", uiLayer, targetV);
       else if (tapCount === 2) {
         toggleNativeFullscreen(targetP, targetV);
       }
