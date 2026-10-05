@@ -31,6 +31,7 @@
 | **v65.36** | [`HTML5视频手势 x Bilibili触屏优化_v65.36.user.js`](file:///C:/Users/10916/OneDrive/Code/AI/Software/bilibili-touch-optimizer/archive/HTML5%E8%A7%86%E9%A2%91%E6%89%8B%E5%8A%BF%20x%20Bilibili%E8%A7%A6%E5%B1%8F%E4%BC%98%E5%8C%96_v65.36.user.js) | 移除小窗特殊逻辑并统一全域控件与手势规范：彻底剥离悬浮小窗按键微缩排布（`.gt-small-mode`）、特设死区压缩（6px/12px）、50/50 刀切手势及 Toast 偏置；小窗与常规大播放器完全统一，共享标准按键尺寸（26px）、居中排布、标准死区与左右 30%/40%/30% 手势体系。 |
 | **v65.37** | [`HTML5视频手势 x Bilibili触屏优化_v65.37.user.js`](file:///C:/Users/10916/OneDrive/Code/AI/Software/bilibili-touch-optimizer/archive/HTML5%E8%A7%86%E9%A2%91%E6%89%8B%E5%8A%BF%20x%20Bilibili%E8%A7%A6%E5%B1%8F%E4%BC%98%E5%8C%96_v65.37.user.js) | 脚本作用域收敛限定至 B 站专属域名：元数据匹配规则由 `*://*/*` 全网通配收敛为 `*://*.bilibili.com/*` 与 `*://bilibili.com/*`；IIFE 入口首行注入运行期安全防护断言，彻底杜绝在非 B 站页面的加载与事件监听开销。 |
 | **v65.38** | [`HTML5视频手势 x Bilibili触屏优化_v65.38.user.js`](file:///C:/Users/10916/OneDrive/Code/AI/Software/bilibili-touch-optimizer/archive/HTML5%E8%A7%86%E9%A2%91%E6%89%8B%E5%8A%BF%20x%20Bilibili%E8%A7%A6%E5%B1%8F%E4%BC%98%E5%8C%96_v65.38.user.js) | 重命名脚本与追加作者署名：脚本正式命名为 `bilibili-touch-optimizer`；作者字段更新包含 `Zephyr Three`。 |
+| **v65.39** | [`bilibili-touch-optimizer_v65.39.user.js`](file:///C:/Users/10916/OneDrive/Code/AI/Software/bilibili-touch-optimizer/archive/bilibili-touch-optimizer_v65.39.user.js) | 彻底移除所有自带功能按键与锁屏遮罩，界面纯净零侵入；彻底移除画面缩放平移（Zoom/Pan）；双指手势固定为 0.25x 步长档位调速（每 36px 物理移动切档，附带 10ms 触觉切档震动反馈）；保留居中 Toast、双击 Seek 动画指示与底部 2px 极细微缩进度条。 |
 
 
 
