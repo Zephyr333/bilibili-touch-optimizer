@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
-// @version      65.25
-// @description  保留HTML5视频手势核心逻辑，修复B站首页及各页面输入框焦点误触视频控件，修复双击全屏漏判与穿透、双击后单击失效及倍速状态残留，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
+// @version      65.26
+// @description  保留HTML5视频手势核心逻辑，确立视频全域为脚本统一管理区，支持顶部与底部死区防误触且彻底杜绝触屏长按弹出原生右键菜单，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
@@ -56,6 +56,9 @@
     lastTapTime = 0,
     tapCount = 0,
     uiTimer = null;
+  let startInTopDeadzone = false,
+    startInBottomDeadzone = false,
+    startInControls = false;
   let activeSeekSide = null,
     seekAccumulator = 0,
     seekSessionTimer = null,
@@ -416,6 +419,13 @@
       return null;
     }
 
+    let inTopDeadzone = false;
+    let inBottomDeadzone = false;
+    const inControls = !!findUp(
+      t,
+      ".bpx-player-control-bottom, .bpx-player-progress-area, .bpx-player-control-top, .art-bottom, .dplayer-controller",
+    );
+
     if (e.touches && e.touches.length > 0) {
       const checkBox = rootContainer || targetVideo;
       const rect = checkBox.getBoundingClientRect();
@@ -428,19 +438,20 @@
       )
         return null;
 
-      // 上下边缘窄条防误触（顶部用于手机下拉状态栏，底部用于播放器进度条及控制按钮）
+      // 上下边缘窄条防误触高度计算
       const topDeadzone = Math.min(CFG.deadzoneTop, rect.height * 0.15);
       const bottomDeadzone = Math.min(CFG.deadzoneBottom, rect.height * 0.35);
-      if (
-        touch.clientY <= rect.top + topDeadzone ||
-        touch.clientY >= rect.bottom - bottomDeadzone
-      )
-        return null;
+      inTopDeadzone = touch.clientY <= rect.top + topDeadzone;
+      inBottomDeadzone = touch.clientY >= rect.bottom - bottomDeadzone;
     }
 
     return {
       root: rootContainer,
       video: targetVideo,
+      inTopDeadzone,
+      inBottomDeadzone,
+      inControls,
+      isGestureZone: !inTopDeadzone && !inBottomDeadzone && !inControls,
       isNaked:
         !rootContainer.classList?.contains("gt-video-wrapper") &&
         !findUp(rootContainer, VIP_SELECTORS.replace(", iframe", "")),
@@ -852,24 +863,35 @@
     if (!hit || !hit.video) return;
     targetP = ensureUIAndWrapper(hit);
     targetV = hit.video;
-    // 仅在触摸操作后短窗口拦截右键菜单，避免长期影响鼠标右键。
+
+    // 记录本次触控的区域归属
+    startInTopDeadzone = !!hit.inTopDeadzone;
+    startInBottomDeadzone = !!hit.inBottomDeadzone;
+    startInControls = !!hit.inControls;
+
+    // 凡触碰进入视频管理区，加锁屏蔽右键菜单
     if (isBilibiliHost()) {
-      suppressContextMenuUntil = Date.now() + 2000;
+      suppressContextMenuUntil = Date.now() + 2500;
     }
 
     clearTimeout(lpTimer);
     const now = Date.now();
 
-    // [修复] 引入连击追踪，对齐浏览器与Hammer 500ms双击判定窗口
-    const isRapid = now - lastTapTime < 500;
-    if (!isRapid) {
-      tapCount = 1;
-      wasPlayingBeforeSequence = targetV ? !targetV.paused : false;
-      enforceStateUntil = 0;
-      enforceTarget = null;
-      activeFullscreenVideo = null;
+    // 底部死区与原生控件区清空连击（顶部区域放行，正常支持双击快进/全屏）
+    if (startInBottomDeadzone || startInControls) {
+      tapCount = 0;
     } else {
-      tapCount++;
+      // 引入连击追踪，对齐浏览器与Hammer 500ms双击判定窗口
+      const isRapid = now - lastTapTime < 500;
+      if (!isRapid) {
+        tapCount = 1;
+        wasPlayingBeforeSequence = targetV ? !targetV.paused : false;
+        enforceStateUntil = 0;
+        enforceTarget = null;
+        activeFullscreenVideo = null;
+      } else {
+        tapCount++;
+      }
     }
     lastTapTime = now;
 
@@ -947,14 +969,17 @@
       action = "pinch";
       if (getFS()) hideUI(targetP);
     } else if (e.touches.length === 1 && state.scale === 1.0) {
-      lpTimer = setTimeout(() => {
-        if (isTouch) {
-          action = "rate";
-          targetV.playbackRate = CFG.rateBase;
-          showMsg(`${targetV.playbackRate.toFixed(1)}x`);
-          if (getFS()) hideUI(targetP);
-        }
-      }, CFG.longPress);
+      // 底部控件区域（如进度条、按钮）禁止触发长按加速；顶部与中央视频区域允许长按 3.0x 加速
+      if (!startInControls && !startInBottomDeadzone) {
+        lpTimer = setTimeout(() => {
+          if (isTouch) {
+            action = "rate";
+            targetV.playbackRate = CFG.rateBase;
+            showMsg(`${targetV.playbackRate.toFixed(1)}x`);
+            if (getFS()) hideUI(targetP);
+          }
+        }, CFG.longPress);
+      }
     }
   };
 
@@ -1028,7 +1053,13 @@
 
     if (!action) {
       if (Math.abs(dx) > CFG.minDist || Math.abs(dy) > CFG.minDist) {
-        clearTimeout(lpTimer);
+        clearTimeout(lpTimer); // 只要发生位移立即销毁长按计时器（顶部下拉状态栏不误触加速）
+
+        // 起点在顶部死区（系统下拉栏）、底部死区或原生控件区，严禁触发滑动调节
+        if (startInTopDeadzone || startInBottomDeadzone || startInControls) {
+          return;
+        }
+
         action =
           Math.abs(dx) > Math.abs(dy)
             ? "seek"
@@ -1087,6 +1118,9 @@
       action = null;
       isTouch = false;
       targetV = null;
+      startInTopDeadzone = false;
+      startInBottomDeadzone = false;
+      startInControls = false;
     };
 
     if (tapCount >= 2) {
@@ -1141,7 +1175,9 @@
     }
 
     if (!action) {
-      if (!activeSeekSide) wakeUpUI(targetP, targetV);
+      if (!activeSeekSide && !startInControls && !startInBottomDeadzone) {
+        wakeUpUI(targetP, targetV);
+      }
     } else {
       blockGestureUntil = now + 500;
     }
@@ -1152,6 +1188,9 @@
       if (pRef && !getFS()) pRef.classList.remove("gt-lock-touch");
       if (vRef) vRef.classList.remove("gt-lock-touch");
     }, 100);
+    if (isBilibiliHost()) {
+      suppressContextMenuUntil = Math.max(suppressContextMenuUntil, now + 1000);
+    }
     cleanupGestureState();
   };
 
@@ -1216,7 +1255,8 @@
         e.target,
         ".bpx-player-container, #bilibili-player, .html5-video-player, video",
       );
-      if (onVideo && Date.now() < suppressContextMenuUntil) {
+      // 触控进行中 (isTouch) 或处于触碰后保护期内，坚决阻止弹出右键菜单
+      if (onVideo && (isTouch || Date.now() < suppressContextMenuUntil)) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
