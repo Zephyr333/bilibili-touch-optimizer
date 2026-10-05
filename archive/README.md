@@ -33,6 +33,8 @@
 | **v65.38** | [`HTML5视频手势 x Bilibili触屏优化_v65.38.user.js`](file:///C:/Users/10916/OneDrive/Code/AI/Software/bilibili-touch-optimizer/archive/HTML5%E8%A7%86%E9%A2%91%E6%89%8B%E5%8A%BF%20x%20Bilibili%E8%A7%A6%E5%B1%8F%E4%BC%98%E5%8C%96_v65.38.user.js) | 重命名脚本与追加作者署名：脚本正式命名为 `bilibili-touch-optimizer`；作者字段更新包含 `Zephyr Three`。 |
 | **v65.39** | [`bilibili-touch-optimizer_v65.39.user.js`](file:///C:/Users/10916/OneDrive/Code/AI/Software/bilibili-touch-optimizer/archive/bilibili-touch-optimizer_v65.39.user.js) | 彻底移除所有自带功能按键与锁屏遮罩，界面纯净零侵入；彻底移除画面缩放平移（Zoom/Pan）；双指手势固定为 0.25x 步长档位调速（每 36px 物理移动切档，附带 10ms 触觉切档震动反馈）；保留居中 Toast、双击 Seek 动画指示与底部 2px 极细微缩进度条。 |
 | **v65.40** | [`bilibili-touch-optimizer_v65.40.user.js`](file:///C:/Users/10916/OneDrive/Code/AI/Software/bilibili-touch-optimizer/archive/bilibili-touch-optimizer_v65.40.user.js) | 调整亮度 100% 磁吸卡位阈值为上下 10%（0.90 ~ 1.10），在 90%~110% 区间内自动磁吸至 100% 原画亮度并触发触觉震动反馈；新增 `CFG.briSnapRange: 0.10` 参数化配置。 |
+| **v65.41** | [`bilibili-touch-optimizer_v65.41.user.js`](file:///C:/Users/10916/OneDrive/Code/AI/Software/bilibili-touch-optimizer/archive/bilibili-touch-optimizer_v65.41.user.js) | 修复双指缩放调速基准速率：彻底消除强制回退至 1.0x 起步的缺陷，改为直接继承视频当前实际播放速率（按 0.25x 档位平滑对齐），双指外展加速、内捏减速；优化单指长按 3.0x 状态向双指手势过渡时的速率安全复位。 |
+
 
 
 
