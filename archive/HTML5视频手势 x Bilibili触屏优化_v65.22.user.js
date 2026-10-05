@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
-// @version      65.32
-// @description  保留HTML5视频手势核心逻辑，确立视频全域为脚本统一管理区，支持上下死区防误触，彻底杜绝长按右键与底栏文字误选，手势坐标自适应播放器自身边界，提示框与控制按钮物理居中约束，音量亮度与双击快进快退严格统一为左右各30%（中间40%为安全死区防误触），新增亮度100%磁吸卡位与动态一键复位按键，全面重构右下角悬浮小窗交互（微缩紧凑控件排布杜绝溢出且不隐藏、小窗死区自适应压缩至10%以内、小窗左右手势自然二分且Toast避让顶栏），默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
+// @version      65.22
+// @description  保留HTML5视频手势核心逻辑，融合B站长按防右键菜单，支持上下边缘窄条防误触，默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量，修复双击全屏状态保持与退出自动暂停问题。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
@@ -47,8 +47,6 @@
     initVol,
     initTime,
     initRate,
-    initBri = 1.0,
-    inBriSnapZone = false,
     targetV,
     targetP,
     isTouch = false,
@@ -57,14 +55,7 @@
     toastTimer = null,
     lastTapTime = 0,
     tapCount = 0,
-    activeUIEl = null,
     uiTimer = null;
-  let startInTopDeadzone = false,
-    startInBottomDeadzone = false,
-    startInControls = false;
-  let playerCenterX = 0,
-    playerHeight = 0,
-    startRatio = 0.5;
   let activeSeekSide = null,
     seekAccumulator = 0,
     seekSessionTimer = null,
@@ -80,47 +71,10 @@
     originDy = 0;
 
   let blockGestureUntil = 0;
-  let suppressClickUntil = 0;
   let suppressContextMenuUntil = 0;
   let enforceStateUntil = 0;
   let enforceTarget = null;
   let wasPlayingBeforeFullscreenToggle = false;
-  let activeFullscreenVideo = null;
-
-  const syncPlaybackStateAfterTransition = () => {
-    if (Date.now() > enforceStateUntil) return;
-    if (!enforceTarget) return;
-
-    const v =
-      activeFullscreenVideo || targetV || document.querySelector("video");
-    if (!v) return;
-
-    if (enforceTarget === "playing") {
-      if (v.paused) {
-        v.play().catch(() => {});
-      }
-    } else if (enforceTarget === "paused") {
-      if (!v.paused) {
-        v.pause();
-      }
-    }
-  };
-
-  const schedulePlaybackStateEnforcement = (duration = 2500) => {
-    if (!enforceTarget) return;
-    const end = Date.now() + duration;
-    enforceStateUntil = Math.max(enforceStateUntil, end);
-    [0, 80, 200, 400, 700, 1100, 1600, 2200].forEach((delay) => {
-      setTimeout(syncPlaybackStateAfterTransition, delay);
-    });
-    setTimeout(() => {
-      if (Date.now() >= enforceStateUntil) {
-        enforceTarget = null;
-        wasPlayingBeforeFullscreenToggle = false;
-        activeFullscreenVideo = null;
-      }
-    }, duration + 100);
-  };
 
   window.addEventListener("message", (e) => {
     if (e.data && e.data.type === "gt_lock_orientation") {
@@ -194,7 +148,6 @@
   hijackFullscreenAPI();
 
   const toggleNativeFullscreen = (container, video) => {
-    activeFullscreenVideo = video || container.querySelector("video") || targetV;
     const isFS =
       !!(document.fullscreenElement || document.webkitFullscreenElement) ||
       container.classList.contains("gt-fullscreen-active");
@@ -221,7 +174,6 @@
           window.top.postMessage({ type: "gt_unlock_orientation" }, "*");
         } catch (e) {}
       }
-      schedulePlaybackStateEnforcement(2500);
     } else {
       const forceLockLandscape = () => {
         const dir =
@@ -229,19 +181,14 @@
             ? "portrait"
             : "landscape";
         if (screen.orientation?.lock) {
-          screen.orientation
-            .lock(dir)
-            .catch(() => {
-              try {
-                window.top.postMessage(
-                  { type: "gt_lock_orientation", dir: dir },
-                  "*",
-                );
-              } catch (err) {}
-            })
-            .finally(() => {
-              syncPlaybackStateAfterTransition();
-            });
+          screen.orientation.lock(dir).catch(() => {
+            try {
+              window.top.postMessage(
+                { type: "gt_lock_orientation", dir: dir },
+                "*",
+              );
+            } catch (err) {}
+          });
         } else {
           try {
             window.top.postMessage(
@@ -249,7 +196,6 @@
               "*",
             );
           } catch (err) {}
-          syncPlaybackStateAfterTransition();
         }
       };
 
@@ -277,7 +223,6 @@
           fsBtn.click();
         } catch (e) {}
       }
-      schedulePlaybackStateEnforcement(2500);
     }
   };
 
@@ -289,12 +234,9 @@
   GM_addStyle(`
         ${TOUCH_LOCK_SELECTORS} { touch-action: none !important; overscroll-behavior: none !important; }
         .bpx-player-control-bottom, .bpx-player-control-bottom *, .bpx-player-progress-area, .bpx-player-progress-area * { touch-action: auto !important; }
-        ${TOUCH_LOCK_SELECTORS}, ${TOUCH_LOCK_SELECTORS} * { -webkit-user-select: none !important; -moz-user-select: none !important; -ms-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }
-        ${TOUCH_LOCK_SELECTORS} input, ${TOUCH_LOCK_SELECTORS} textarea, ${TOUCH_LOCK_SELECTORS} [contenteditable="true"], ${TOUCH_LOCK_SELECTORS} [contenteditable=""], ${TOUCH_LOCK_SELECTORS} [role="textbox"], ${TOUCH_LOCK_SELECTORS} .bpx-player-dm-input { -webkit-user-select: text !important; -moz-user-select: text !important; -ms-user-select: text !important; user-select: text !important; }
         
         .dplayer-pause-ad, .dplayer-notice, .dplayer-ad, .artplayer-plugin-ads, .art-ad, .art-notice, .MacPlayer .play-ad, #playleft .pause-ad, .player-ad, .ad-box, .pause-ad, .ad-mask, .pause-html, #pause-html, [class*="pause-html"], [id*="pause-html"] { display: none !important; pointer-events: none !important; opacity: 0 !important; z-index: -2147483648 !important; width: 0 !important; height: 0 !important; }
-        .gt-toast { position: absolute !important; top: 10% !important; left: 50% !important; transform: translateX(-50%) !important; white-space: nowrap !important; background: rgba(0,0,0,0.15); color: #fff; padding: 4px 10px; border-radius: 4px; font: 700 14px system-ui; z-index: 2147483647; pointer-events: none; opacity: 0; transition: opacity 0.2s; text-shadow: 0 0 2px #000; border: 1px solid rgba(255,255,255,0.05); }
-        body > .gt-toast { position: fixed !important; }
+        .gt-toast { position: fixed; top: 10%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.15); color: #fff; padding: 4px 10px; border-radius: 4px; font: 700 14px system-ui; z-index: 2147483647; pointer-events: none; opacity: 0; transition: opacity 0.2s; text-shadow: 0 0 2px #000; border: 1px solid rgba(255,255,255,0.05); }
         .gt-toast.show { opacity: 1; }
         .gt-seek-msg { position: absolute !important; top: 50% !important; color: rgba(255, 255, 255, 0.95) !important; z-index: 2147483647 !important; pointer-events: none !important; opacity: 0; transition: opacity 0.15s ease-out; display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important; align-items: center !important; justify-content: center !important; gap: 6px !important; font-family: system-ui, -apple-system, sans-serif !important; white-space: nowrap !important; text-shadow: 0 0 10px rgba(0,0,0,0.8), 0 0 4px rgba(0,0,0,0.6), 0 2px 4px rgba(0,0,0,0.5) !important; }
         .gt-seek-msg.left { left: 15%; transform: translateY(-50%); }
@@ -311,21 +253,7 @@
         @keyframes gt-slide-l { 0% { transform: translateX(4px); opacity: 0; } 40% { opacity: 1; } 100% { transform: translateX(-4px); opacity: 0; } }
         :fullscreen { background-color: #000 !important; }
         
-        .gt-ui-layer { position: absolute !important; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none !important; z-index: 2147483647 !important; overflow: hidden !important; border-radius: inherit !important; }
-        
-        /* 针对小窗模式（.bpx-state-mini / .gt-small-mode）的微缩紧凑型控件排布，彻底杜绝溢出同时保证全部可用 */
-        .bpx-state-mini .gt-btn-base, [class*="mini-player"] .gt-btn-base, .gt-ui-layer.gt-small-mode .gt-btn-base { width: 20px !important; height: 20px !important; }
-        .bpx-state-mini .gt-btn-base svg, [class*="mini-player"] .gt-btn-base svg, .gt-ui-layer.gt-small-mode .gt-btn-base svg { width: 12px !important; height: 12px !important; }
-        .bpx-state-mini .gt-btn-base span, [class*="mini-player"] .gt-btn-base span, .gt-ui-layer.gt-small-mode .gt-btn-base span { font-size: 8px !important; }
-        .bpx-state-mini .gt-rotate-btn, .gt-ui-layer.gt-small-mode .gt-rotate-btn { top: 6px !important; left: 6px !important; }
-        .bpx-state-mini .gt-seek-mode-btn, .gt-ui-layer.gt-small-mode .gt-seek-mode-btn { top: 30px !important; left: 6px !important; }
-        .bpx-state-mini .gt-seek-val-btn, .gt-ui-layer.gt-small-mode .gt-seek-val-btn { top: 54px !important; left: 6px !important; }
-        .bpx-state-mini .gt-reset-speed-btn, .gt-ui-layer.gt-small-mode .gt-reset-speed-btn { top: 78px !important; left: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-reset-bri-btn, .gt-ui-layer.gt-small-mode .gt-reset-bri-btn { top: 102px !important; left: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-lock-btn, .gt-ui-layer.gt-small-mode .gt-lock-btn { top: 6px !important; right: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-mode-btn, .gt-ui-layer.gt-small-mode .gt-mode-btn { top: 30px !important; right: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-reset-zoom-btn, .gt-ui-layer.gt-small-mode .gt-reset-zoom-btn { top: 54px !important; right: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-toast, [class*="mini-player"] .gt-toast, .gt-ui-layer.gt-small-mode .gt-toast { top: 25% !important; font-size: 11px !important; padding: 2px 6px !important; }
+        .gt-ui-layer { position: absolute !important; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none !important; z-index: 2147483647 !important; }
         
         .gt-mini-progress { position: absolute; bottom: 0; left: 0; width: 100%; height: 2px; background: rgba(255,255,255,0.2); z-index: 2147483640; pointer-events: none; overflow: hidden; opacity: 0.9; transition: height 0.2s, opacity 0.3s; box-shadow: 0 -1px 1px rgba(0,0,0,0.2); }
         .gt-mini-progress .gt-fill { height: 100%; width: 0%; background: ${CFG.progressBarColor}; transition: width 0.1s linear; box-shadow: 0 0 4px ${CFG.progressBarColor}; }
@@ -347,7 +275,6 @@
         .gt-seek-mode-btn { top: calc(10px + 38px); left: 10px; }
         .gt-seek-val-btn { top: calc(10px + 76px); left: 10px; }
         .gt-reset-speed-btn { top: calc(50% + 40px); left: 10px; transform: translateY(-50%); }
-        .gt-reset-bri-btn { top: calc(50% + 78px); left: 10px; transform: translateY(-50%); }
  
         .gt-lock-btn { top: calc(50% - 38px); right: 10px; transform: translateY(-50%); }
         .gt-mode-btn { top: calc(50% + 40px); right: 10px; transform: translateY(-50%); }
@@ -362,7 +289,6 @@
         :fullscreen .gt-seek-val-btn, .gt-fullscreen-active .gt-seek-val-btn { top: calc(20px + 120px); left: 20px; }
         
         :fullscreen .gt-reset-speed-btn, .gt-fullscreen-active .gt-reset-speed-btn { top: calc(50% + 35px); left: 20px; }
-        :fullscreen .gt-reset-bri-btn, .gt-fullscreen-active .gt-reset-bri-btn { top: calc(50% + 85px); left: 20px; }
         :fullscreen .gt-lock-btn, .gt-fullscreen-active .gt-lock-btn { top: calc(50% - 35px); right: 20px; }
         :fullscreen .gt-mode-btn, .gt-fullscreen-active .gt-mode-btn { top: calc(50% + 35px); right: 20px; }
         :fullscreen .gt-reset-zoom-btn, .gt-fullscreen-active .gt-reset-zoom-btn { top: calc(50% + 85px); right: 20px; }
@@ -371,7 +297,6 @@
   const SVG_LOCK = `<svg viewBox="0 0 24 24" width="100%" height="100%"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>`;
   const SVG_UNLOCK = `<svg viewBox="0 0 24 24" width="100%" height="100%"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>`;
   const SVG_SPEED = `<svg viewBox="0 0 24 24" width="100%" height="100%"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>`;
-  const SVG_SUN = `<svg viewBox="0 0 24 24" width="100%" height="100%"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="4"></line><line x1="12" y1="20" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"></line><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="4" y2="12"></line><line x1="20" y1="12" x2="22" y2="12"></line><line x1="6.34" y1="17.66" x2="4.93" y2="19.07"></line><line x1="19.07" y1="6.34" x2="17.66" y2="4.93"></line></svg>`;
   const SVG_ZOOM = `<svg viewBox="0 0 24 24" width="100%" height="100%"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg>`;
   const SVG_RESET_ZOOM = `<svg viewBox="0 0 24 24" width="100%" height="100%"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" stroke-dasharray="4 2"></rect></svg>`;
   const SVG_SEC = `<svg viewBox="0 0 24 24" width="100%" height="100%"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
@@ -383,17 +308,8 @@
     document.mozFullScreenElement ||
     document.msFullscreenElement;
 
-  const isInteractiveInput = (el) => {
-    return !!findUp(
-      el,
-      "input, textarea, select, [contenteditable='true'], [contenteditable=''], [role='textbox'], [role='searchbox'], .nav-search-content, .nav-search-form",
-    );
-  };
-
   const identify = (e) => {
     const t = e.target;
-    if (isInteractiveInput(t)) return null;
-
     let targetVideo = null;
     let rootContainer = null;
 
@@ -410,18 +326,11 @@
     if (!targetVideo) {
       const videos = document.querySelectorAll("video");
       if (videos.length > 0) {
-        targetVideo = Array.from(videos).filter((v) => {
-          if (!v || v.clientWidth <= 50) return false;
-          // 排除顶栏 Banner、动画背景等非播放类装饰性视频
-          if (findUp(v, ".bili-header, .animated-banner, header, [role='banner']")) {
-            return false;
-          }
-          return true;
-        }).sort(
+        targetVideo = Array.from(videos).sort(
           (a, b) =>
             b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight,
         )[0];
-        if (targetVideo) {
+        if (targetVideo && targetVideo.clientWidth > 50) {
           rootContainer =
             findUp(targetVideo, VIP_SELECTORS) || targetVideo.parentNode;
         } else targetVideo = null;
@@ -433,25 +342,6 @@
     if (rootContainer && rootContainer.tagName === "VIDEO") {
       rootContainer = rootContainer.parentNode;
     }
-
-    // 兜底命中时，若触点目标完全不属于视频或其容器层级（例如悬浮在视频上方的无关顶栏/输入框），则不予接管
-    if (
-      rootContainer &&
-      rootContainer !== document.body &&
-      rootContainer !== document.documentElement &&
-      !rootContainer.contains(t) &&
-      targetVideo !== t
-    ) {
-      return null;
-    }
-
-    let inTopDeadzone = false;
-    let inBottomDeadzone = false;
-    let isSmallPlayer = false;
-    const inControls = !!findUp(
-      t,
-      ".bpx-player-control-bottom, .bpx-player-progress-area, .bpx-player-control-top, .art-bottom, .dplayer-controller",
-    );
 
     if (e.touches && e.touches.length > 0) {
       const checkBox = rootContainer || targetVideo;
@@ -465,33 +355,19 @@
       )
         return null;
 
-      isSmallPlayer =
-        rect.height < 240 ||
-        (rootContainer &&
-          (rootContainer.classList?.contains("bpx-state-mini") ||
-            rootContainer.getAttribute?.("data-screen") === "mini" ||
-            !!findUp(rootContainer, ".bpx-state-mini, [data-screen='mini'], [class*='mini-player']")));
-
-      // 上下边缘防误触死区计算：小窗模式尺寸极小，自适应压缩死区至 6px/12px，彻底杜绝起手滑动被丢弃
-      const topDeadzone = isSmallPlayer
-        ? Math.min(6, rect.height * 0.05)
-        : Math.min(CFG.deadzoneTop, rect.height * 0.15);
-      const bottomDeadzone = isSmallPlayer
-        ? Math.min(12, rect.height * 0.1)
-        : Math.min(CFG.deadzoneBottom, rect.height * 0.35);
-
-      inTopDeadzone = touch.clientY <= rect.top + topDeadzone;
-      inBottomDeadzone = touch.clientY >= rect.bottom - bottomDeadzone;
+      // 上下边缘窄条防误触（顶部用于手机下拉状态栏，底部用于播放器进度条及控制按钮）
+      const topDeadzone = Math.min(CFG.deadzoneTop, rect.height * 0.15);
+      const bottomDeadzone = Math.min(CFG.deadzoneBottom, rect.height * 0.35);
+      if (
+        touch.clientY <= rect.top + topDeadzone ||
+        touch.clientY >= rect.bottom - bottomDeadzone
+      )
+        return null;
     }
 
     return {
       root: rootContainer,
       video: targetVideo,
-      inTopDeadzone,
-      inBottomDeadzone,
-      inControls,
-      isSmall: isSmallPlayer,
-      isGestureZone: !inTopDeadzone && !inBottomDeadzone && !inControls,
       isNaked:
         !rootContainer.classList?.contains("gt-video-wrapper") &&
         !findUp(rootContainer, VIP_SELECTORS.replace(", iframe", "")),
@@ -505,38 +381,23 @@
       t.id = "gt-toast";
       t.className = "gt-toast";
     }
-    if (!txt) {
-      t.classList.remove("show");
-      return;
-    }
-    const currentHost =
-      (targetP && (targetP.querySelector(".gt-ui-layer") || targetP)) ||
-      activeUIEl ||
-      document.querySelector(".gt-ui-layer") ||
-      document.fullscreenElement ||
-      document.body;
-    if (t.parentNode !== currentHost) currentHost.appendChild(t);
+    const p = document.fullscreenElement || document.body;
+    if (t.parentNode !== p) p.appendChild(t);
     t.innerText = txt;
     t.classList.add("show");
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.classList.remove("show"), 800);
   };
 
+  let activeUIEl = null;
   const updateUIState = (root, video) => {
     if (!root) return;
     const uiLayer = root.querySelector(".gt-ui-layer");
     if (!uiLayer) return;
-    const isSmall =
-      (root.clientHeight > 0 && root.clientHeight < 240) ||
-      root.classList?.contains("bpx-state-mini") ||
-      root.getAttribute?.("data-screen") === "mini" ||
-      !!findUp(root, ".bpx-state-mini, [data-screen='mini'], [class*='mini-player']");
-    uiLayer.classList.toggle("gt-small-mode", isSmall);
     const btnLock = uiLayer.querySelector(".gt-lock-btn"),
       btnMode = uiLayer.querySelector(".gt-mode-btn"),
       btnRot = uiLayer.querySelector(".gt-rotate-btn"),
       btnRst = uiLayer.querySelector(".gt-reset-speed-btn"),
-      btnBriRst = uiLayer.querySelector(".gt-reset-bri-btn"),
       btnZoomRst = uiLayer.querySelector(".gt-reset-zoom-btn"),
       btnSeekMode = uiLayer.querySelector(".gt-seek-mode-btn"),
       btnSeekVal = uiLayer.querySelector(".gt-seek-val-btn"),
@@ -554,7 +415,7 @@
 
     if (state.isScreenLocked) {
       if (shield) shield.style.display = "block";
-      [btnMode, btnRot, btnRst, btnBriRst, btnZoomRst, btnSeekMode, btnSeekVal].forEach(
+      [btnMode, btnRot, btnRst, btnZoomRst, btnSeekMode, btnSeekVal].forEach(
         (b) => b?.classList.add("hidden-by-state"),
       );
     } else {
@@ -570,15 +431,6 @@
         if (video && video.playbackRate !== 1.0)
           btnRst.classList.remove("hidden-by-state");
         else btnRst.classList.add("hidden-by-state");
-      }
-      if (btnBriRst) {
-        const hasBriMod =
-          video &&
-          !!video.dataset.gtBri &&
-          video.dataset.gtBri !== "1" &&
-          video.dataset.gtBri !== "1.00";
-        if (hasBriMod) btnBriRst.classList.remove("hidden-by-state");
-        else btnBriRst.classList.add("hidden-by-state");
       }
       if (btnZoomRst) {
         if (state.scale > 1.0) btnZoomRst.classList.remove("hidden-by-state");
@@ -790,19 +642,6 @@
         wakeUpUI(root, video);
       });
       uiLayer.appendChild(rstBtn);
-      const briRstBtn = document.createElement("div");
-      briRstBtn.className = "gt-btn-base gt-reset-bri-btn";
-      briRstBtn.innerHTML = SVG_SUN;
-      bindTap(briRstBtn, () => {
-        if (video) {
-          video.style.filter = "";
-          delete video.dataset.gtBri;
-        }
-        showMsg("亮度: 100%");
-        updateUIState(root, video);
-        wakeUpUI(root, video);
-      });
-      uiLayer.appendChild(briRstBtn);
       const zoomRstBtn = document.createElement("div");
       zoomRstBtn.className = "gt-btn-base gt-reset-zoom-btn";
       zoomRstBtn.innerHTML = SVG_RESET_ZOOM;
@@ -907,12 +746,8 @@
             "gt-fullscreen-active",
             "gt-ui-visible",
           );
+          el.style.cssText = "";
         });
-    }
-
-    if (isInteractiveInput(e.target)) {
-      clearTimeout(lpTimer);
-      return;
     }
 
     const isBtn = findUp(e.target, ".gt-btn-base");
@@ -940,44 +775,21 @@
     if (!hit || !hit.video) return;
     targetP = ensureUIAndWrapper(hit);
     targetV = hit.video;
-
-    // 记录本次触控的区域归属
-    startInTopDeadzone = !!hit.inTopDeadzone;
-    startInBottomDeadzone = !!hit.inBottomDeadzone;
-    startInControls = !!hit.inControls;
-
-    // 记录播放器几何参数（自适应全屏、普通居中及悬浮小窗）
-    const pRect = (targetP || targetV).getBoundingClientRect();
-    playerCenterX = pRect.left + pRect.width / 2;
-    playerHeight = Math.max(100, pRect.height);
-
-    // 凡触碰进入视频管理区，加锁屏蔽右键菜单并清理历史选区残留
+    // 仅在触摸操作后短窗口拦截右键菜单，避免长期影响鼠标右键。
     if (isBilibiliHost()) {
-      suppressContextMenuUntil = Date.now() + 2500;
-    }
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0 && !isInteractiveInput(e.target) && sel.removeAllRanges) {
-      sel.removeAllRanges();
+      suppressContextMenuUntil = Date.now() + 2000;
     }
 
     clearTimeout(lpTimer);
     const now = Date.now();
 
-    // 底部死区与原生控件区清空连击（顶部区域放行，正常支持双击快进/全屏）
-    if (startInBottomDeadzone || startInControls) {
-      tapCount = 0;
+    // [修复] 引入连击追踪，抛弃旧版的双击清零逻辑
+    const isRapid = now - lastTapTime < 350;
+    if (!isRapid) {
+      tapCount = 1;
+      wasPlayingBeforeSequence = targetV ? !targetV.paused : false;
     } else {
-      // 引入连击追踪，对齐浏览器与Hammer 500ms双击判定窗口
-      const isRapid = now - lastTapTime < 500;
-      if (!isRapid) {
-        tapCount = 1;
-        wasPlayingBeforeSequence = targetV ? !targetV.paused : false;
-        enforceStateUntil = 0;
-        enforceTarget = null;
-        activeFullscreenVideo = null;
-      } else {
-        tapCount++;
-      }
+      tapCount++;
     }
     lastTapTime = now;
 
@@ -995,8 +807,7 @@
 
     // [修复] 只要处于连击阻塞期（>=2次），直接拦截并锁死播放状态
     if (tapCount >= 2) {
-      blockGestureUntil = now + 1000;
-      suppressClickUntil = now + 500;
+      blockGestureUntil = now + 500;
       if (e.cancelable) e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
@@ -1010,18 +821,18 @@
       const r = refRect.width > 0 ? xInPlayer / refRect.width : 0.5;
       const uiLayer = targetP.querySelector(".gt-ui-layer") || targetP;
 
-      enforceTarget = wasPlayingBeforeSequence ? "playing" : "paused";
-      wasPlayingBeforeFullscreenToggle = wasPlayingBeforeSequence;
-      activeFullscreenVideo = targetV;
-      schedulePlaybackStateEnforcement(2500);
-
       if (r < 0.3) handleAccumulatedSeek("left", uiLayer, targetV);
       else if (r > 0.7) handleAccumulatedSeek("right", uiLayer, targetV);
       else if (tapCount === 2) {
+        wasPlayingBeforeFullscreenToggle = wasPlayingBeforeSequence;
         toggleNativeFullscreen(targetP, targetV);
       }
 
-      syncPlaybackStateAfterTransition();
+      enforceTarget = wasPlayingBeforeSequence ? "playing" : "paused";
+      enforceStateUntil = now + 1500;
+      if (enforceTarget === "playing" && targetV.paused)
+        targetV.play().catch(() => {});
+      else if (enforceTarget === "paused" && !targetV.paused) targetV.pause();
 
       isTouch = false; // 标记本序列已被阻断，无需追踪常规手势
       if (getFS()) hideUI(targetP);
@@ -1032,15 +843,9 @@
     action = null;
     startX = e.touches[0].clientX;
     startY = e.touches[0].clientY;
-    startRatio = Math.max(
-      0,
-      Math.min(1, (startX - pRect.left) / Math.max(1, pRect.width)),
-    );
     initVol = targetV.volume;
     initTime = targetV.currentTime;
     initRate = targetV.playbackRate;
-    initBri = targetV && targetV.dataset.gtBri ? parseFloat(targetV.dataset.gtBri) : 1.0;
-    inBriSnapZone = false;
 
     if (targetV && !targetV.dataset.gtUserVol && (targetV.muted || targetV.volume < 1.0)) {
       applyDefaultVolume(targetV);
@@ -1061,17 +866,14 @@
       action = "pinch";
       if (getFS()) hideUI(targetP);
     } else if (e.touches.length === 1 && state.scale === 1.0) {
-      // 底部控件区域（如进度条、按钮）禁止触发长按加速；顶部与中央视频区域允许长按 3.0x 加速
-      if (!startInControls && !startInBottomDeadzone) {
-        lpTimer = setTimeout(() => {
-          if (isTouch) {
-            action = "rate";
-            targetV.playbackRate = CFG.rateBase;
-            showMsg(`${targetV.playbackRate.toFixed(1)}x`);
-            if (getFS()) hideUI(targetP);
-          }
-        }, CFG.longPress);
-      }
+      lpTimer = setTimeout(() => {
+        if (isTouch) {
+          action = "rate";
+          targetV.playbackRate = CFG.rateBase;
+          showMsg(`${targetV.playbackRate.toFixed(1)}x`);
+          if (getFS()) hideUI(targetP);
+        }
+      }, CFG.longPress);
     }
   };
 
@@ -1145,32 +947,13 @@
 
     if (!action) {
       if (Math.abs(dx) > CFG.minDist || Math.abs(dy) > CFG.minDist) {
-        clearTimeout(lpTimer); // 只要发生位移立即销毁长按计时器（顶部下拉状态栏不误触加速）
-
-        // 起点在顶部死区（系统下拉栏）、底部死区或原生控件区，严禁触发滑动调节
-        if (startInTopDeadzone || startInBottomDeadzone || startInControls) {
-          return;
-        }
-
-        const isSmallPlayer =
-          playerHeight < 240 ||
-          (targetP &&
-            (targetP.classList?.contains("bpx-state-mini") ||
-              targetP.getAttribute?.("data-screen") === "mini" ||
-              !!findUp(targetP, ".bpx-state-mini, [data-screen='mini'], [class*='mini-player']")));
-
-        if (Math.abs(dx) > Math.abs(dy)) {
-          action = "seek";
-        } else if (isSmallPlayer) {
-          // 悬浮小窗模式：因物理尺寸受限，回退为以小窗中线自然二分左右手势（左调光、右调音），消除中间40%的盲区
-          action = startX < (playerCenterX || innerWidth / 2) ? "bri" : "vol";
-        } else if (startRatio < 0.3) {
-          action = "bri";
-        } else if (startRatio > 0.7) {
-          action = "vol";
-        } else {
-          action = "none";
-        }
+        clearTimeout(lpTimer);
+        action =
+          Math.abs(dx) > Math.abs(dy)
+            ? "seek"
+            : startX < innerWidth / 2
+              ? "bri"
+              : "vol";
 
         enforceTarget = wasPlayingBeforeSequence ? "playing" : "paused";
         enforceStateUntil = Date.now() + 800;
@@ -1194,75 +977,28 @@
       targetV.dataset.gtUserVol = "1";
       targetV.volume = Math.max(
         0,
-        Math.min(1, initVol + (dy / (playerHeight || innerHeight)) * 2 * CFG.senseY),
+        Math.min(1, initVol + (dy / innerHeight) * 2 * CFG.senseY),
       );
       showMsg(`Vol: ${Math.round(targetV.volume * 100)}%`);
     } else if (action === "bri") {
-      let rawB =
-        initBri + (dy / (playerHeight || innerHeight)) * 2 * CFG.senseY;
-      rawB = Math.max(0.1, Math.min(2.0, rawB));
-      let b = rawB;
-      if (rawB >= 0.95 && rawB <= 1.05) {
-        b = 1.0;
-        if (!inBriSnapZone) {
-          inBriSnapZone = true;
-          if (navigator.vibrate) {
-            try {
-              navigator.vibrate(12);
-            } catch (e) {}
-          }
-        }
-      } else {
-        inBriSnapZone = false;
-      }
-
-      if (b === 1.0) {
-        targetV.style.filter = "";
-        delete targetV.dataset.gtBri;
-        showMsg("Bri: 100%");
-      } else {
-        targetV.style.filter = `brightness(${b})`;
-        targetV.dataset.gtBri = b.toFixed(2);
-        showMsg(`Bri: ${Math.round(b * 100)}%`);
-      }
+      let b = Math.max(
+        0.1,
+        Math.min(2.0, 1 + (dy / innerHeight) * 2 * CFG.senseY),
+      );
+      targetV.style.filter = `brightness(${b})`;
+      showMsg(`Bri: ${Math.round(b * 100)}%`);
     }
   };
 
   const onEnd = (e) => {
     const now = Date.now();
 
-    const cleanupGestureState = () => {
-      clearTimeout(lpTimer);
-      if (action === "rate" && targetV) {
-        targetV.playbackRate = initRate;
-        showMsg("");
-      }
-      if (pendingRate !== null && targetV) {
-        targetV.playbackRate = pendingRate;
-        pendingRate = null;
-      }
-      action = null;
-      isTouch = false;
-      targetV = null;
-      startInTopDeadzone = false;
-      startInBottomDeadzone = false;
-      startInControls = false;
-      playerCenterX = 0;
-      playerHeight = 0;
-      startRatio = 0.5;
-      inBriSnapZone = false;
-    };
-
-    if (tapCount >= 2) {
-      suppressClickUntil = Math.max(suppressClickUntil, now + 400);
-    }
-
     // [修复] 尾随物理拦截墙：暴力拦截连击状态下的所有 touchend 遗漏
     if (now < blockGestureUntil && !findUp(e.target, ".gt-btn-base")) {
       e.stopPropagation();
       e.stopImmediatePropagation();
       if (e.cancelable) e.preventDefault();
-      cleanupGestureState();
+      isTouch = false;
       return;
     }
 
@@ -1274,13 +1010,10 @@
         e.stopPropagation();
         e.stopImmediatePropagation();
       }
-      cleanupGestureState();
+      isTouch = false;
       return;
     }
-    if (!isTouch) {
-      cleanupGestureState();
-      return;
-    }
+    if (!isTouch) return;
     if (e.touches.length > 0) {
       if (action === "pinch") action = "pinch_wait";
       return;
@@ -1303,28 +1036,20 @@
     ) {
       wakeUpUI(targetP, targetV);
     }
-    if (action === "bri" && targetV && targetV.dataset.gtBri) {
-      wakeUpUI(targetP, targetV);
-    }
 
     if (!action) {
-      if (!activeSeekSide && !startInControls && !startInBottomDeadzone) {
-        wakeUpUI(targetP, targetV);
-      }
+      if (!activeSeekSide) wakeUpUI(targetP, targetV);
     } else {
       blockGestureUntil = now + 500;
     }
 
-    const pRef = targetP;
-    const vRef = targetV;
     setTimeout(() => {
-      if (pRef && !getFS()) pRef.classList.remove("gt-lock-touch");
-      if (vRef) vRef.classList.remove("gt-lock-touch");
+      if (targetP && !getFS()) targetP.classList.remove("gt-lock-touch");
+      if (targetV) targetV.classList.remove("gt-lock-touch");
     }, 100);
-    if (isBilibiliHost()) {
-      suppressContextMenuUntil = Math.max(suppressContextMenuUntil, now + 1000);
-    }
-    cleanupGestureState();
+    isTouch = false;
+    targetV = null;
+    action = null;
   };
 
   const pOpt = { passive: false, capture: true };
@@ -1349,29 +1074,11 @@
               state.isScreenLocked &&
               !findUp(e.target, ".gt-btn-base") &&
               (!!getFS() || (targetP && targetP.contains(e.target)));
-            if (Date.now() < suppressClickUntil || isL) {
+            if (activeSeekSide || isL) {
               e.stopPropagation();
               e.stopImmediatePropagation();
               e.preventDefault();
               if (isL && targetP && targetV) wakeUpUI(targetP, targetV);
-            }
-          } else if (evt === "dblclick") {
-            const isTouchGenerated =
-              e.sourceCapabilities?.firesTouchEvents ||
-              (e.pointerType && e.pointerType === "touch") ||
-              Date.now() - lastTapTime < 700;
-            const onVideo =
-              e.target.tagName === "VIDEO" ||
-              !!findUp(e.target, VIP_SELECTORS) ||
-              (targetP && targetP.contains(e.target));
-            if (
-              (isTouchGenerated || Date.now() < blockGestureUntil) &&
-              onVideo &&
-              !findUp(e.target, ".gt-btn-base")
-            ) {
-              e.preventDefault();
-              e.stopPropagation();
-              e.stopImmediatePropagation();
             }
           }
         },
@@ -1388,30 +1095,13 @@
         e.target,
         ".bpx-player-container, #bilibili-player, .html5-video-player, video",
       );
-      // 触控进行中 (isTouch) 或处于触碰后保护期内，坚决阻止弹出右键菜单
-      if (onVideo && (isTouch || Date.now() < suppressContextMenuUntil)) {
+      if (onVideo && Date.now() < suppressContextMenuUntil) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
       }
     },
     { capture: true, passive: false },
-  );
-
-  document.addEventListener(
-    "selectstart",
-    (e) => {
-      if (isInteractiveInput(e.target)) return;
-      const onVideo =
-        !!findUp(e.target, VIP_SELECTORS) ||
-        (targetP && targetP.contains(e.target));
-      if (onVideo) {
-        e.preventDefault();
-        const sel = window.getSelection();
-        if (sel && sel.removeAllRanges) sel.removeAllRanges();
-      }
-    },
-    { capture: true },
   );
 
   [
@@ -1425,11 +1115,6 @@
       if (!fsEl) {
         hideUI(targetP);
         document
-          .querySelectorAll(".gt-fullscreen-active")
-          .forEach((el) => {
-            el.classList.remove("gt-fullscreen-active", "gt-ui-visible");
-          });
-        document
           .querySelectorAll(".gt-lock-touch")
           .forEach((el) => el.classList.remove("gt-lock-touch"));
         if (screen.orientation?.unlock) {
@@ -1438,12 +1123,26 @@
             window.top.postMessage({ type: "gt_unlock_orientation" }, "*");
           } catch (e) {}
         }
-        schedulePlaybackStateEnforcement(2000);
+        if (enforceTarget === "playing" || wasPlayingBeforeFullscreenToggle) {
+          const v = targetV || document.querySelector("video");
+          if (v && v.paused) {
+            v.play().catch(() => {});
+          }
+          setTimeout(() => {
+            if (
+              enforceTarget === "playing" ||
+              wasPlayingBeforeFullscreenToggle
+            ) {
+              const v2 = targetV || document.querySelector("video");
+              if (v2 && v2.paused) {
+                v2.play().catch(() => {});
+              }
+            }
+          }, 300);
+        }
       } else {
-        schedulePlaybackStateEnforcement(2000);
         setTimeout(() => {
-          let v =
-            activeFullscreenVideo || targetV || document.querySelector("video");
+          let v = targetV || document.querySelector("video");
           let root = fsEl;
           if (root && root.tagName === "VIDEO") root = root.parentNode;
           wakeUpUI(root, v);
@@ -1453,19 +1152,14 @@
                 ? "portrait"
                 : "landscape";
             if (screen.orientation?.lock) {
-              screen.orientation
-                .lock(dir)
-                .catch(() => {
-                  try {
-                    window.top.postMessage(
-                      { type: "gt_lock_orientation", dir: dir },
-                      "*",
-                    );
-                  } catch (err) {}
-                })
-                .finally(() => {
-                  syncPlaybackStateAfterTransition();
-                });
+              screen.orientation.lock(dir).catch(() => {
+                try {
+                  window.top.postMessage(
+                    { type: "gt_lock_orientation", dir: dir },
+                    "*",
+                  );
+                } catch (err) {}
+              });
             } else {
               try {
                 window.top.postMessage(
@@ -1473,10 +1167,9 @@
                   "*",
                 );
               } catch (err) {}
-              syncPlaybackStateAfterTransition();
             }
           }
-        }, 150);
+        }, 200);
       }
     });
   });
@@ -1788,9 +1481,6 @@
       return;
     }
     document.querySelectorAll("video").forEach((v) => {
-      if (findUp(v, ".bili-header, .animated-banner, header, [role='banner']")) {
-        return;
-      }
       if (!v.dataset.gtUserVol) {
         applyDefaultVolume(v);
       }
@@ -1806,9 +1496,6 @@
 
   const scanExistingVideos = () => {
     document.querySelectorAll("video").forEach((v) => {
-      if (findUp(v, ".bili-header, .animated-banner, header, [role='banner']")) {
-        return;
-      }
       applyDefaultPlaybackRate(v);
       applyDefaultVolume(v);
       schedulePreferences(v);

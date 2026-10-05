@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HTML5视频手势 x Bilibili触屏优化
 // @namespace    http://tampermonkey.net/
-// @version      65.32
-// @description  保留HTML5视频手势核心逻辑，确立视频全域为脚本统一管理区，支持上下死区防误触，彻底杜绝长按右键与底栏文字误选，手势坐标自适应播放器自身边界，提示框与控制按钮物理居中约束，音量亮度与双击快进快退严格统一为左右各30%（中间40%为安全死区防误触），新增亮度100%磁吸卡位与动态一键复位按键，全面重构右下角悬浮小窗交互（微缩紧凑控件排布杜绝溢出且不隐藏、小窗死区自适应压缩至10%以内、小窗左右手势自然二分且Toast避让顶栏），默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
+// @version      65.29
+// @description  保留HTML5视频手势核心逻辑，确立视频全域为脚本统一管理区，支持上下死区防误触，彻底杜绝长按右键与底栏文字误选，手势坐标自适应播放器自身边界，彻底修复提示框与控制按钮越界显示（浮窗/小窗/非全屏居中约束），默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
 // @author       Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
 // @match        *://*/*
@@ -47,8 +47,6 @@
     initVol,
     initTime,
     initRate,
-    initBri = 1.0,
-    inBriSnapZone = false,
     targetV,
     targetP,
     isTouch = false,
@@ -63,8 +61,7 @@
     startInBottomDeadzone = false,
     startInControls = false;
   let playerCenterX = 0,
-    playerHeight = 0,
-    startRatio = 0.5;
+    playerHeight = 0;
   let activeSeekSide = null,
     seekAccumulator = 0,
     seekSessionTimer = null,
@@ -312,20 +309,7 @@
         :fullscreen { background-color: #000 !important; }
         
         .gt-ui-layer { position: absolute !important; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none !important; z-index: 2147483647 !important; overflow: hidden !important; border-radius: inherit !important; }
-        
-        /* 针对小窗模式（.bpx-state-mini / .gt-small-mode）的微缩紧凑型控件排布，彻底杜绝溢出同时保证全部可用 */
-        .bpx-state-mini .gt-btn-base, [class*="mini-player"] .gt-btn-base, .gt-ui-layer.gt-small-mode .gt-btn-base { width: 20px !important; height: 20px !important; }
-        .bpx-state-mini .gt-btn-base svg, [class*="mini-player"] .gt-btn-base svg, .gt-ui-layer.gt-small-mode .gt-btn-base svg { width: 12px !important; height: 12px !important; }
-        .bpx-state-mini .gt-btn-base span, [class*="mini-player"] .gt-btn-base span, .gt-ui-layer.gt-small-mode .gt-btn-base span { font-size: 8px !important; }
-        .bpx-state-mini .gt-rotate-btn, .gt-ui-layer.gt-small-mode .gt-rotate-btn { top: 6px !important; left: 6px !important; }
-        .bpx-state-mini .gt-seek-mode-btn, .gt-ui-layer.gt-small-mode .gt-seek-mode-btn { top: 30px !important; left: 6px !important; }
-        .bpx-state-mini .gt-seek-val-btn, .gt-ui-layer.gt-small-mode .gt-seek-val-btn { top: 54px !important; left: 6px !important; }
-        .bpx-state-mini .gt-reset-speed-btn, .gt-ui-layer.gt-small-mode .gt-reset-speed-btn { top: 78px !important; left: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-reset-bri-btn, .gt-ui-layer.gt-small-mode .gt-reset-bri-btn { top: 102px !important; left: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-lock-btn, .gt-ui-layer.gt-small-mode .gt-lock-btn { top: 6px !important; right: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-mode-btn, .gt-ui-layer.gt-small-mode .gt-mode-btn { top: 30px !important; right: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-reset-zoom-btn, .gt-ui-layer.gt-small-mode .gt-reset-zoom-btn { top: 54px !important; right: 6px !important; transform: none !important; }
-        .bpx-state-mini .gt-toast, [class*="mini-player"] .gt-toast, .gt-ui-layer.gt-small-mode .gt-toast { top: 25% !important; font-size: 11px !important; padding: 2px 6px !important; }
+        .bpx-state-mini .gt-btn-base, [class*="mini-player"] .gt-btn-base, .gt-ui-layer.gt-small-mode .gt-btn-base { display: none !important; }
         
         .gt-mini-progress { position: absolute; bottom: 0; left: 0; width: 100%; height: 2px; background: rgba(255,255,255,0.2); z-index: 2147483640; pointer-events: none; overflow: hidden; opacity: 0.9; transition: height 0.2s, opacity 0.3s; box-shadow: 0 -1px 1px rgba(0,0,0,0.2); }
         .gt-mini-progress .gt-fill { height: 100%; width: 0%; background: ${CFG.progressBarColor}; transition: width 0.1s linear; box-shadow: 0 0 4px ${CFG.progressBarColor}; }
@@ -347,7 +331,6 @@
         .gt-seek-mode-btn { top: calc(10px + 38px); left: 10px; }
         .gt-seek-val-btn { top: calc(10px + 76px); left: 10px; }
         .gt-reset-speed-btn { top: calc(50% + 40px); left: 10px; transform: translateY(-50%); }
-        .gt-reset-bri-btn { top: calc(50% + 78px); left: 10px; transform: translateY(-50%); }
  
         .gt-lock-btn { top: calc(50% - 38px); right: 10px; transform: translateY(-50%); }
         .gt-mode-btn { top: calc(50% + 40px); right: 10px; transform: translateY(-50%); }
@@ -362,7 +345,6 @@
         :fullscreen .gt-seek-val-btn, .gt-fullscreen-active .gt-seek-val-btn { top: calc(20px + 120px); left: 20px; }
         
         :fullscreen .gt-reset-speed-btn, .gt-fullscreen-active .gt-reset-speed-btn { top: calc(50% + 35px); left: 20px; }
-        :fullscreen .gt-reset-bri-btn, .gt-fullscreen-active .gt-reset-bri-btn { top: calc(50% + 85px); left: 20px; }
         :fullscreen .gt-lock-btn, .gt-fullscreen-active .gt-lock-btn { top: calc(50% - 35px); right: 20px; }
         :fullscreen .gt-mode-btn, .gt-fullscreen-active .gt-mode-btn { top: calc(50% + 35px); right: 20px; }
         :fullscreen .gt-reset-zoom-btn, .gt-fullscreen-active .gt-reset-zoom-btn { top: calc(50% + 85px); right: 20px; }
@@ -371,7 +353,6 @@
   const SVG_LOCK = `<svg viewBox="0 0 24 24" width="100%" height="100%"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>`;
   const SVG_UNLOCK = `<svg viewBox="0 0 24 24" width="100%" height="100%"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>`;
   const SVG_SPEED = `<svg viewBox="0 0 24 24" width="100%" height="100%"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>`;
-  const SVG_SUN = `<svg viewBox="0 0 24 24" width="100%" height="100%"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="4"></line><line x1="12" y1="20" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"></line><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="4" y2="12"></line><line x1="20" y1="12" x2="22" y2="12"></line><line x1="6.34" y1="17.66" x2="4.93" y2="19.07"></line><line x1="19.07" y1="6.34" x2="17.66" y2="4.93"></line></svg>`;
   const SVG_ZOOM = `<svg viewBox="0 0 24 24" width="100%" height="100%"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg>`;
   const SVG_RESET_ZOOM = `<svg viewBox="0 0 24 24" width="100%" height="100%"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" stroke-dasharray="4 2"></rect></svg>`;
   const SVG_SEC = `<svg viewBox="0 0 24 24" width="100%" height="100%"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
@@ -447,7 +428,6 @@
 
     let inTopDeadzone = false;
     let inBottomDeadzone = false;
-    let isSmallPlayer = false;
     const inControls = !!findUp(
       t,
       ".bpx-player-control-bottom, .bpx-player-progress-area, .bpx-player-control-top, .art-bottom, .dplayer-controller",
@@ -465,21 +445,9 @@
       )
         return null;
 
-      isSmallPlayer =
-        rect.height < 240 ||
-        (rootContainer &&
-          (rootContainer.classList?.contains("bpx-state-mini") ||
-            rootContainer.getAttribute?.("data-screen") === "mini" ||
-            !!findUp(rootContainer, ".bpx-state-mini, [data-screen='mini'], [class*='mini-player']")));
-
-      // 上下边缘防误触死区计算：小窗模式尺寸极小，自适应压缩死区至 6px/12px，彻底杜绝起手滑动被丢弃
-      const topDeadzone = isSmallPlayer
-        ? Math.min(6, rect.height * 0.05)
-        : Math.min(CFG.deadzoneTop, rect.height * 0.15);
-      const bottomDeadzone = isSmallPlayer
-        ? Math.min(12, rect.height * 0.1)
-        : Math.min(CFG.deadzoneBottom, rect.height * 0.35);
-
+      // 上下边缘窄条防误触高度计算
+      const topDeadzone = Math.min(CFG.deadzoneTop, rect.height * 0.15);
+      const bottomDeadzone = Math.min(CFG.deadzoneBottom, rect.height * 0.35);
       inTopDeadzone = touch.clientY <= rect.top + topDeadzone;
       inBottomDeadzone = touch.clientY >= rect.bottom - bottomDeadzone;
     }
@@ -490,7 +458,6 @@
       inTopDeadzone,
       inBottomDeadzone,
       inControls,
-      isSmall: isSmallPlayer,
       isGestureZone: !inTopDeadzone && !inBottomDeadzone && !inControls,
       isNaked:
         !rootContainer.classList?.contains("gt-video-wrapper") &&
@@ -526,17 +493,12 @@
     if (!root) return;
     const uiLayer = root.querySelector(".gt-ui-layer");
     if (!uiLayer) return;
-    const isSmall =
-      (root.clientHeight > 0 && root.clientHeight < 240) ||
-      root.classList?.contains("bpx-state-mini") ||
-      root.getAttribute?.("data-screen") === "mini" ||
-      !!findUp(root, ".bpx-state-mini, [data-screen='mini'], [class*='mini-player']");
+    const isSmall = root.clientHeight > 0 && root.clientHeight < 240;
     uiLayer.classList.toggle("gt-small-mode", isSmall);
     const btnLock = uiLayer.querySelector(".gt-lock-btn"),
       btnMode = uiLayer.querySelector(".gt-mode-btn"),
       btnRot = uiLayer.querySelector(".gt-rotate-btn"),
       btnRst = uiLayer.querySelector(".gt-reset-speed-btn"),
-      btnBriRst = uiLayer.querySelector(".gt-reset-bri-btn"),
       btnZoomRst = uiLayer.querySelector(".gt-reset-zoom-btn"),
       btnSeekMode = uiLayer.querySelector(".gt-seek-mode-btn"),
       btnSeekVal = uiLayer.querySelector(".gt-seek-val-btn"),
@@ -554,7 +516,7 @@
 
     if (state.isScreenLocked) {
       if (shield) shield.style.display = "block";
-      [btnMode, btnRot, btnRst, btnBriRst, btnZoomRst, btnSeekMode, btnSeekVal].forEach(
+      [btnMode, btnRot, btnRst, btnZoomRst, btnSeekMode, btnSeekVal].forEach(
         (b) => b?.classList.add("hidden-by-state"),
       );
     } else {
@@ -570,15 +532,6 @@
         if (video && video.playbackRate !== 1.0)
           btnRst.classList.remove("hidden-by-state");
         else btnRst.classList.add("hidden-by-state");
-      }
-      if (btnBriRst) {
-        const hasBriMod =
-          video &&
-          !!video.dataset.gtBri &&
-          video.dataset.gtBri !== "1" &&
-          video.dataset.gtBri !== "1.00";
-        if (hasBriMod) btnBriRst.classList.remove("hidden-by-state");
-        else btnBriRst.classList.add("hidden-by-state");
       }
       if (btnZoomRst) {
         if (state.scale > 1.0) btnZoomRst.classList.remove("hidden-by-state");
@@ -790,19 +743,6 @@
         wakeUpUI(root, video);
       });
       uiLayer.appendChild(rstBtn);
-      const briRstBtn = document.createElement("div");
-      briRstBtn.className = "gt-btn-base gt-reset-bri-btn";
-      briRstBtn.innerHTML = SVG_SUN;
-      bindTap(briRstBtn, () => {
-        if (video) {
-          video.style.filter = "";
-          delete video.dataset.gtBri;
-        }
-        showMsg("亮度: 100%");
-        updateUIState(root, video);
-        wakeUpUI(root, video);
-      });
-      uiLayer.appendChild(briRstBtn);
       const zoomRstBtn = document.createElement("div");
       zoomRstBtn.className = "gt-btn-base gt-reset-zoom-btn";
       zoomRstBtn.innerHTML = SVG_RESET_ZOOM;
@@ -1032,15 +972,9 @@
     action = null;
     startX = e.touches[0].clientX;
     startY = e.touches[0].clientY;
-    startRatio = Math.max(
-      0,
-      Math.min(1, (startX - pRect.left) / Math.max(1, pRect.width)),
-    );
     initVol = targetV.volume;
     initTime = targetV.currentTime;
     initRate = targetV.playbackRate;
-    initBri = targetV && targetV.dataset.gtBri ? parseFloat(targetV.dataset.gtBri) : 1.0;
-    inBriSnapZone = false;
 
     if (targetV && !targetV.dataset.gtUserVol && (targetV.muted || targetV.volume < 1.0)) {
       applyDefaultVolume(targetV);
@@ -1152,25 +1086,12 @@
           return;
         }
 
-        const isSmallPlayer =
-          playerHeight < 240 ||
-          (targetP &&
-            (targetP.classList?.contains("bpx-state-mini") ||
-              targetP.getAttribute?.("data-screen") === "mini" ||
-              !!findUp(targetP, ".bpx-state-mini, [data-screen='mini'], [class*='mini-player']")));
-
-        if (Math.abs(dx) > Math.abs(dy)) {
-          action = "seek";
-        } else if (isSmallPlayer) {
-          // 悬浮小窗模式：因物理尺寸受限，回退为以小窗中线自然二分左右手势（左调光、右调音），消除中间40%的盲区
-          action = startX < (playerCenterX || innerWidth / 2) ? "bri" : "vol";
-        } else if (startRatio < 0.3) {
-          action = "bri";
-        } else if (startRatio > 0.7) {
-          action = "vol";
-        } else {
-          action = "none";
-        }
+        action =
+          Math.abs(dx) > Math.abs(dy)
+            ? "seek"
+            : startX < (playerCenterX || innerWidth / 2)
+              ? "bri"
+              : "vol";
 
         enforceTarget = wasPlayingBeforeSequence ? "playing" : "paused";
         enforceStateUntil = Date.now() + 800;
@@ -1198,33 +1119,12 @@
       );
       showMsg(`Vol: ${Math.round(targetV.volume * 100)}%`);
     } else if (action === "bri") {
-      let rawB =
-        initBri + (dy / (playerHeight || innerHeight)) * 2 * CFG.senseY;
-      rawB = Math.max(0.1, Math.min(2.0, rawB));
-      let b = rawB;
-      if (rawB >= 0.95 && rawB <= 1.05) {
-        b = 1.0;
-        if (!inBriSnapZone) {
-          inBriSnapZone = true;
-          if (navigator.vibrate) {
-            try {
-              navigator.vibrate(12);
-            } catch (e) {}
-          }
-        }
-      } else {
-        inBriSnapZone = false;
-      }
-
-      if (b === 1.0) {
-        targetV.style.filter = "";
-        delete targetV.dataset.gtBri;
-        showMsg("Bri: 100%");
-      } else {
-        targetV.style.filter = `brightness(${b})`;
-        targetV.dataset.gtBri = b.toFixed(2);
-        showMsg(`Bri: ${Math.round(b * 100)}%`);
-      }
+      let b = Math.max(
+        0.1,
+        Math.min(2.0, 1 + (dy / (playerHeight || innerHeight)) * 2 * CFG.senseY),
+      );
+      targetV.style.filter = `brightness(${b})`;
+      showMsg(`Bri: ${Math.round(b * 100)}%`);
     }
   };
 
@@ -1249,8 +1149,6 @@
       startInControls = false;
       playerCenterX = 0;
       playerHeight = 0;
-      startRatio = 0.5;
-      inBriSnapZone = false;
     };
 
     if (tapCount >= 2) {
@@ -1301,9 +1199,6 @@
       (action === "pinch" || action === "pinch_wait" || action === "pan") &&
       targetV
     ) {
-      wakeUpUI(targetP, targetV);
-    }
-    if (action === "bri" && targetV && targetV.dataset.gtBri) {
       wakeUpUI(targetP, targetV);
     }
 
