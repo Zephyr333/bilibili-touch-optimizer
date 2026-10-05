@@ -23,7 +23,7 @@ HTML5 视频触屏手势操作与 Bilibili 触屏体验优化 Userscript。
 
 ## 安装方式
 
-在 Tampermonkey 或 ScriptCat 中添加安装 `HTML5视频手势 x Bilibili触屏优化.user.js`。
+在 Tampermonkey 或 ScriptCat 中添加安装 `bilibili-touch-optimizer.user.js`。
 
 ## License
 
