@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         bilibili-touch-optimizer
-// @namespace    http://tampermonkey.net/
+// @namespace    https://github.com/Zephyr333/bilibili-touch-optimizer
 // @version      65.40
 // @description  B站HTML5视频触屏手势优化，彻底移除所有自带功能按键与锁屏遮罩，界面纯净零侵入；双指手势固定为0.25x步长档位调速（附带切档触觉反馈）；保留居中Toast、双击Seek动画指示与底部2px微缩进度条；左右30%分别调节亮度（含100%磁吸卡位）与音量，中间40%双击全屏与长按3.0x加速；默认1.5倍速，默认打开字幕与关闭弹幕，默认开启100%音量。
 // @author       Zephyr Three, Gemini & 仙, Blysh, Fusion by Copilot
 // @license      MIT
+// @homepageURL  https://github.com/Zephyr333/bilibili-touch-optimizer
+// @supportURL   https://github.com/Zephyr333/bilibili-touch-optimizer/issues
 // @match        *://*.bilibili.com/*
 // @match        *://bilibili.com/*
 // @grant        GM_addStyle
